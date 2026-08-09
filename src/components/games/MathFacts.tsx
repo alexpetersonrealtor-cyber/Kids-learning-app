@@ -1,15 +1,45 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import { playShoot, playExplosion, playCorrect, playHurt, playGameOver } from "@/lib/arcade-sound";
 import type { Tier } from "@/lib/grade-tiers";
 
-const TOTAL_QUESTIONS = 10;
+const WIDTH = 360;
+const HEIGHT = 480;
+const SHIP_Y = HEIGHT - 40;
+const SHIP_SPEED = 260; // px/sec
+const PROJECTILE_SPEED = 420; // px/sec
+const SHOOT_COOLDOWN = 260; // ms
+const STARTING_LIVES = 3;
+const ROCK_RADIUS = 26;
 
 interface Question {
   a: number;
   b: number;
   op: "+" | "-";
+}
+
+interface Rock {
+  x: number;
+  y: number;
+  label: number;
+  correct: boolean;
+  alive: boolean;
+}
+
+interface Projectile {
+  x: number;
+  y: number;
+}
+
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  color: string;
 }
 
 function randInt(min: number, max: number) {
@@ -18,135 +48,376 @@ function randInt(min: number, max: number) {
 
 function makeQuestion(tier: Tier): Question {
   if (tier === "PRE_K_K") {
-    const a = randInt(1, 5);
-    const b = randInt(1, 5);
-    return { a, b, op: "+" };
+    return { a: randInt(1, 5), b: randInt(1, 5), op: "+" };
   }
   if (tier === "FIRST_SECOND") {
     const op: "+" | "-" = Math.random() < 0.5 ? "+" : "-";
-    if (op === "+") {
-      return { a: randInt(1, 15), b: randInt(1, 15), op };
-    }
+    if (op === "+") return { a: randInt(1, 15), b: randInt(1, 15), op };
     const a = randInt(5, 20);
-    const b = randInt(1, a);
-    return { a, b, op };
+    return { a, b: randInt(1, a), op };
   }
-  // THIRD_FIFTH: multi-digit addition/subtraction within 100
   const op: "+" | "-" = Math.random() < 0.5 ? "+" : "-";
-  if (op === "+") {
-    return { a: randInt(10, 90), b: randInt(10, 90), op };
-  }
+  if (op === "+") return { a: randInt(10, 90), b: randInt(10, 90), op };
   const a = randInt(20, 100);
-  const b = randInt(1, a);
-  return { a, b, op };
+  return { a, b: randInt(1, a), op };
 }
 
 function answer(q: Question) {
   return q.op === "+" ? q.a + q.b : q.a - q.b;
 }
 
+function makeRocks(question: Question): Rock[] {
+  const correctAnswer = answer(question);
+  const distractors = new Set<number>();
+  while (distractors.size < 3) {
+    const offset = randInt(1, 9) * (Math.random() < 0.5 ? -1 : 1);
+    const candidate = correctAnswer + offset;
+    if (candidate !== correctAnswer && candidate >= 0) distractors.add(candidate);
+  }
+
+  const labels = [correctAnswer, ...distractors];
+  for (let i = labels.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [labels[i], labels[j]] = [labels[j], labels[i]];
+  }
+
+  const slotWidth = WIDTH / labels.length;
+  return labels.map((label, i) => ({
+    x: slotWidth * i + slotWidth / 2,
+    y: -ROCK_RADIUS - i * 40,
+    label,
+    correct: label === correctAnswer,
+    alive: true,
+  }));
+}
+
 export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }) {
-  const [round, setRound] = useState(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const shipXRef = useRef(WIDTH / 2);
+  const rocksRef = useRef<Rock[]>([]);
+  const projectilesRef = useRef<Projectile[]>([]);
+  const particlesRef = useRef<Particle[]>([]);
+  const keysRef = useRef<Set<string>>(new Set());
+  const lastShotRef = useRef(0);
+  const fallSpeedRef = useRef(40);
+  const roundEndedRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+
   const [question, setQuestion] = useState<Question>(() => makeQuestion(tier));
-  const [input, setInput] = useState("");
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [wave, setWave] = useState(1);
+  const [lives, setLives] = useState(STARTING_LIVES);
   const [correctCount, setCorrectCount] = useState(0);
-  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [totalRounds, setTotalRounds] = useState(0);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
 
-  const done = round >= TOTAL_QUESTIONS;
-  const accuracy = useMemo(
-    () => (round > 0 ? Math.round((correctCount / round) * 100) : 0),
-    [round, correctCount],
-  );
+  const gameOver = lives <= 0;
 
   useEffect(() => {
-    if (!done || recorded.current) return;
+    rocksRef.current = makeRocks(question);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const accuracy = totalRounds > 0 ? Math.round((correctCount / totalRounds) * 100) : 0;
+
+  useEffect(() => {
+    if (!gameOver || recorded.current) return;
     recorded.current = true;
+    playGameOver();
     recordGameSession({
       kidId,
       gameType: "math-facts",
       subject: "math",
       skillTag: tier === "THIRD_FIFTH" ? "multi-digit-add-sub" : "add-sub-facts",
       startedAt: startedAt.current,
-      score: correctCount,
+      score,
       accuracy,
     });
-  }, [done, kidId, tier, correctCount, accuracy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver]);
 
-  function submit() {
-    if (input.trim() === "") return;
-    const isCorrect = Number(input) === answer(question);
-    setFeedback(isCorrect ? "correct" : "wrong");
-    if (isCorrect) setCorrectCount((c) => c + 1);
+  function nextRound(missed: boolean) {
+    if (roundEndedRef.current) return;
+    roundEndedRef.current = true;
+
+    setTotalRounds((r) => r + 1);
+    if (missed) {
+      setStreak(0);
+      setLives((l) => Math.max(l - 1, 0));
+    } else {
+      setCorrectCount((c) => c + 1);
+      setStreak((s) => s + 1);
+      setWave((w) => w + 1);
+      fallSpeedRef.current = Math.min(fallSpeedRef.current + 6, 160);
+    }
 
     setTimeout(() => {
-      setFeedback(null);
-      setInput("");
-      setRound((r) => r + 1);
-      setQuestion(makeQuestion(tier));
-    }, 700);
+      const q = makeQuestion(tier);
+      setQuestion(q);
+      rocksRef.current = makeRocks(q);
+      projectilesRef.current = [];
+      roundEndedRef.current = false;
+    }, 550);
   }
 
+  function destroyRock(rock: Rock) {
+    rock.alive = false;
+    const color = rock.correct ? "#4ade80" : "#f87171";
+    for (let i = 0; i < 10; i++) {
+      const angle = (Math.PI * 2 * i) / 10;
+      particlesRef.current.push({
+        x: rock.x,
+        y: rock.y,
+        vx: Math.cos(angle) * 90,
+        vy: Math.sin(angle) * 90,
+        life: 0.4,
+        color,
+      });
+    }
+    if (rock.correct) {
+      playCorrect();
+      nextRound(false);
+    } else {
+      playExplosion();
+      playHurt();
+      nextRound(true);
+    }
+  }
+
+  function shoot() {
+    if (gameOver) return;
+    const now = performance.now();
+    if (now - lastShotRef.current < SHOOT_COOLDOWN) return;
+    lastShotRef.current = now;
+    projectilesRef.current.push({ x: shipXRef.current, y: SHIP_Y - 16 });
+    playShoot();
+  }
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (["ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
+      keysRef.current.add(e.key);
+      if (e.key === " ") shoot();
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      keysRef.current.delete(e.key);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+
+    let lastTime = performance.now();
+
+    const frame = (now: number) => {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+
+      if (!gameOver) {
+        if (keysRef.current.has("ArrowLeft")) shipXRef.current -= SHIP_SPEED * dt;
+        if (keysRef.current.has("ArrowRight")) shipXRef.current += SHIP_SPEED * dt;
+        shipXRef.current = Math.max(20, Math.min(WIDTH - 20, shipXRef.current));
+
+        for (const rock of rocksRef.current) {
+          if (!rock.alive) continue;
+          rock.y += fallSpeedRef.current * dt;
+          if (rock.y > HEIGHT + ROCK_RADIUS) {
+            rock.alive = false;
+            if (rock.correct) nextRound(true);
+          }
+        }
+
+        for (const p of projectilesRef.current) {
+          p.y -= PROJECTILE_SPEED * dt;
+        }
+        projectilesRef.current = projectilesRef.current.filter((p) => p.y > -10);
+
+        for (const p of projectilesRef.current) {
+          for (const rock of rocksRef.current) {
+            if (!rock.alive) continue;
+            const dx = p.x - rock.x;
+            const dy = p.y - rock.y;
+            if (Math.sqrt(dx * dx + dy * dy) < ROCK_RADIUS) {
+              p.y = -100;
+              destroyRock(rock);
+              break;
+            }
+          }
+        }
+      }
+
+      for (const particle of particlesRef.current) {
+        particle.x += particle.vx * dt;
+        particle.y += particle.vy * dt;
+        particle.life -= dt;
+      }
+      particlesRef.current = particlesRef.current.filter((p) => p.life > 0);
+
+      // --- draw ---
+      const bgGradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      bgGradient.addColorStop(0, "#0f172a");
+      bgGradient.addColorStop(1, "#1e293b");
+      ctx.fillStyle = bgGradient;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      for (const rock of rocksRef.current) {
+        if (!rock.alive) continue;
+        ctx.beginPath();
+        ctx.arc(rock.x, rock.y, ROCK_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = "#78716c";
+        ctx.fill();
+        ctx.strokeStyle = "#57534e";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 20px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(rock.label), rock.x, rock.y + 1);
+      }
+
+      ctx.fillStyle = "#38bdf8";
+      for (const p of projectilesRef.current) {
+        ctx.fillRect(p.x - 2, p.y - 8, 4, 16);
+      }
+
+      for (const particle of particlesRef.current) {
+        ctx.globalAlpha = Math.max(particle.life / 0.4, 0);
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      if (!gameOver) {
+        const sx = shipXRef.current;
+        ctx.fillStyle = "#e2e8f0";
+        ctx.beginPath();
+        ctx.moveTo(sx, SHIP_Y - 18);
+        ctx.lineTo(sx - 16, SHIP_Y + 14);
+        ctx.lineTo(sx, SHIP_Y + 4);
+        ctx.lineTo(sx + 16, SHIP_Y + 14);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#38bdf8";
+        ctx.beginPath();
+        ctx.arc(sx, SHIP_Y - 4, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafRef.current = requestAnimationFrame(frame);
+    };
+
+    rafRef.current = requestAnimationFrame(frame);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver]);
+
   function reset() {
-    setRound(0);
+    fallSpeedRef.current = 40;
+    shipXRef.current = WIDTH / 2;
+    projectilesRef.current = [];
+    particlesRef.current = [];
+    roundEndedRef.current = false;
+    const q = makeQuestion(tier);
+    setQuestion(q);
+    rocksRef.current = makeRocks(q);
+    setScore(0);
+    setStreak(0);
+    setWave(1);
+    setLives(STARTING_LIVES);
     setCorrectCount(0);
-    setInput("");
-    setFeedback(null);
-    setQuestion(makeQuestion(tier));
+    setTotalRounds(0);
     startedAt.current = new Date();
     recorded.current = false;
   }
 
-  if (done) {
-    return (
-      <div className="flex flex-col items-center gap-4">
-        <p className="text-2xl font-bold text-slate-800">
-          {correctCount}/{TOTAL_QUESTIONS} correct ({accuracy}%) 🎉
-        </p>
-        <button
-          onClick={reset}
-          className="rounded-lg bg-sky-600 px-4 py-2 font-semibold text-white hover:bg-sky-700"
-        >
-          Play again
-        </button>
-      </div>
-    );
+  // Score is derived from correct answers + streak bonus, applied when a round is won.
+  const prevCorrect = useRef(0);
+  useEffect(() => {
+    if (correctCount > prevCorrect.current) {
+      setScore((s) => s + 100 + (streak - 1) * 20);
+    }
+    prevCorrect.current = correctCount;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [correctCount]);
+
+  function handleTouchMove(dir: -1 | 1) {
+    shipXRef.current = Math.max(20, Math.min(WIDTH - 20, shipXRef.current + dir * 30));
   }
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <p className="text-sm font-semibold text-slate-600">
-        Question {round + 1} of {TOTAL_QUESTIONS} · Correct: {correctCount}
-      </p>
+    <div className="flex flex-col items-center gap-3">
+      <div className="flex w-full max-w-[360px] items-center justify-between text-sm font-semibold text-slate-600">
+        <span>Score: {score}</span>
+        <span>Wave: {wave}</span>
+        <span>{"❤️".repeat(Math.max(lives, 0))}</span>
+      </div>
 
-      <div
-        className={`rounded-3xl px-10 py-8 text-5xl font-extrabold shadow ${
-          feedback === "correct"
-            ? "bg-emerald-100 text-emerald-700"
-            : feedback === "wrong"
-              ? "bg-red-100 text-red-700"
-              : "bg-white text-slate-800"
-        }`}
-      >
+      <div className="rounded-2xl bg-white px-6 py-3 text-2xl font-extrabold text-slate-800 shadow">
         {question.a} {question.op} {question.b} = ?
       </div>
 
-      <input
-        autoFocus
-        type="number"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-        className="w-32 rounded-xl border-2 border-slate-300 px-4 py-3 text-center text-3xl font-bold"
-      />
+      <div className="relative">
+        <canvas
+          ref={canvasRef}
+          width={WIDTH}
+          height={HEIGHT}
+          className="rounded-xl shadow-lg"
+        />
+        {gameOver && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/70 text-center text-white">
+            <p className="text-2xl font-bold">Blasted! 💥</p>
+            <p className="text-sm">
+              {correctCount}/{totalRounds} correct ({accuracy}%) · Score {score}
+            </p>
+            <button
+              onClick={reset}
+              className="rounded-lg bg-sky-500 px-4 py-2 font-semibold text-white hover:bg-sky-400"
+            >
+              Play again
+            </button>
+          </div>
+        )}
+      </div>
 
-      <button
-        onClick={submit}
-        className="rounded-lg bg-sky-600 px-6 py-2 font-semibold text-white hover:bg-sky-700"
-      >
-        Submit
-      </button>
+      <div className="flex gap-2 sm:hidden">
+        <button
+          onTouchStart={() => handleTouchMove(-1)}
+          className="h-14 w-14 rounded-xl bg-white text-2xl shadow active:bg-sky-50"
+        >
+          ⬅
+        </button>
+        <button
+          onTouchStart={shoot}
+          className="h-14 w-20 rounded-xl bg-sky-500 text-lg font-bold text-white shadow active:bg-sky-600"
+        >
+          FIRE
+        </button>
+        <button
+          onTouchStart={() => handleTouchMove(1)}
+          className="h-14 w-14 rounded-xl bg-white text-2xl shadow active:bg-sky-50"
+        >
+          ➡
+        </button>
+      </div>
+      <p className="hidden text-xs text-slate-400 sm:block">
+        Arrow keys to move, Space to fire — blast the rock with the right answer!
+      </p>
     </div>
   );
 }

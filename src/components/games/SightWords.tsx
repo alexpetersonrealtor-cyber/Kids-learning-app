@@ -1,9 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import { playCorrect, playHurt, playGameOver } from "@/lib/arcade-sound";
 
-const ROUNDS = 8;
+const COLS = 5;
+const ROWS = 4;
+const TARGET_COPIES = 3;
+const STARTING_LIVES = 3;
+const MOVE_COOLDOWN_MS = 140;
+const TROGGLE_TICK_MS = 700;
+const INVULNERABLE_MS = 900;
+const START_POS: Pos = { x: 2, y: 2 };
+
+type Dir = "up" | "down" | "left" | "right";
+const DELTA: Record<Dir, [number, number]> = {
+  up: [0, -1],
+  down: [0, 1],
+  left: [-1, 0],
+  right: [1, 0],
+};
+
+interface Tile {
+  word: string;
+  isTarget: boolean;
+  eaten: boolean;
+}
+
+interface Pos {
+  x: number;
+  y: number;
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const copy = [...arr];
@@ -14,10 +41,41 @@ function shuffle<T>(arr: T[]): T[] {
   return copy;
 }
 
-function makeRound(words: string[]): { target: string; choices: string[] } {
-  const choices = shuffle(words).slice(0, 4);
-  const target = choices[Math.floor(Math.random() * choices.length)];
-  return { target, choices: shuffle(choices) };
+function randomEmptyCell(occupied: Pos[]): Pos {
+  let pos: Pos;
+  do {
+    pos = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+  } while (occupied.some((o) => o.x === pos.x && o.y === pos.y));
+  return pos;
+}
+
+function buildGrid(words: string[], target: string): Tile[][] {
+  const cellCount = COLS * ROWS;
+  const targetPositions = new Set<number>();
+  while (targetPositions.size < Math.min(TARGET_COPIES, cellCount)) {
+    targetPositions.add(Math.floor(Math.random() * cellCount));
+  }
+
+  const decoyPool = words.filter((w) => w !== target);
+  const flat: Tile[] = [];
+  for (let i = 0; i < cellCount; i++) {
+    if (targetPositions.has(i)) {
+      flat.push({ word: target, isTarget: true, eaten: false });
+    } else {
+      const decoy = decoyPool[Math.floor(Math.random() * decoyPool.length)] ?? target;
+      flat.push({ word: decoy, isTarget: false, eaten: false });
+    }
+  }
+
+  const grid: Tile[][] = [];
+  for (let y = 0; y < ROWS; y++) {
+    grid.push(flat.slice(y * COLS, y * COLS + COLS));
+  }
+  return grid;
+}
+
+function trogglesForWave(wave: number): number {
+  return wave >= 5 ? 2 : 1;
 }
 
 export default function SightWords({
@@ -29,96 +87,257 @@ export default function SightWords({
   words: string[];
   skillTag: string;
 }) {
-  const [round, setRound] = useState(0);
-  const [current, setCurrent] = useState(() => makeRound(words));
-  const [correctCount, setCorrectCount] = useState(0);
-  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [target, setTarget] = useState<string>(() => shuffle(words)[0]);
+  const [grid, setGrid] = useState<Tile[][]>(() => buildGrid(words, target));
+  const [player, setPlayer] = useState<Pos>(START_POS);
+  const [troggles, setTroggles] = useState<Pos[]>(() => [randomEmptyCell([START_POS])]);
+  const [lives, setLives] = useState(STARTING_LIVES);
+  const [score, setScore] = useState(0);
+  const [wave, setWave] = useState(1);
+  const [correctMunches, setCorrectMunches] = useState(0);
+  const [totalMunches, setTotalMunches] = useState(0);
+  const [flash, setFlash] = useState<"good" | "bad" | null>(null);
+
+  const lastMoveRef = useRef(0);
+  const invulnerableUntilRef = useRef(0);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
 
-  const done = round >= ROUNDS;
-  const accuracy = useMemo(
-    () => (round > 0 ? Math.round((correctCount / round) * 100) : 0),
-    [round, correctCount],
-  );
+  const gameOver = lives <= 0;
+  const accuracy = totalMunches > 0 ? Math.round((correctMunches / totalMunches) * 100) : 0;
+
+  function startWave(newWave: number, wordList: string[]) {
+    const nextTarget = shuffle(wordList)[0];
+    setTarget(nextTarget);
+    setGrid(buildGrid(wordList, nextTarget));
+    setPlayer(START_POS);
+    setTroggles(
+      Array.from({ length: trogglesForWave(newWave) }, () => randomEmptyCell([START_POS])),
+    );
+  }
 
   useEffect(() => {
-    if (!done || recorded.current) return;
+    if (!gameOver || recorded.current) return;
     recorded.current = true;
+    playGameOver();
     recordGameSession({
       kidId,
       gameType: "reading",
       subject: "reading",
       skillTag,
       startedAt: startedAt.current,
-      score: correctCount,
+      score,
       accuracy,
     });
-  }, [done, kidId, skillTag, correctCount, accuracy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver]);
 
-  function choose(word: string) {
-    if (feedback) return;
-    const isCorrect = word === current.target;
-    setFeedback(isCorrect ? "correct" : "wrong");
-    if (isCorrect) setCorrectCount((c) => c + 1);
-
-    setTimeout(() => {
-      setFeedback(null);
-      setRound((r) => r + 1);
-      setCurrent(makeRound(words));
-    }, 700);
+  function takeHit() {
+    const now = performance.now();
+    if (now < invulnerableUntilRef.current) return;
+    invulnerableUntilRef.current = now + INVULNERABLE_MS;
+    playHurt();
+    setLives((l) => Math.max(l - 1, 0));
+    setFlash("bad");
+    setTimeout(() => setFlash(null), 250);
   }
 
+  function munch(pos: Pos) {
+    const tile = grid[pos.y][pos.x];
+    if (tile.eaten) return;
+
+    setTotalMunches((m) => m + 1);
+    setGrid((g) => {
+      const next = g.map((row) => [...row]);
+      next[pos.y][pos.x] = { ...tile, eaten: true };
+      return next;
+    });
+
+    if (tile.isTarget) {
+      playCorrect();
+      setScore((s) => s + 50);
+      setCorrectMunches((c) => c + 1);
+      setFlash("good");
+      setTimeout(() => setFlash(null), 250);
+    } else {
+      takeHit();
+    }
+  }
+
+  // Advance to the next wave once every copy of the target has been munched.
+  useEffect(() => {
+    if (gameOver) return;
+    const flat = grid.flat();
+    const remaining = flat.filter((t) => t.isTarget && !t.eaten).length;
+    if (remaining === 0 && flat.some((t) => t.isTarget)) {
+      const nextWave = wave + 1;
+      setTimeout(() => {
+        setWave(nextWave);
+        startWave(nextWave, words);
+      }, 500);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid, gameOver]);
+
+  function move(dir: Dir) {
+    if (gameOver) return;
+    const now = performance.now();
+    if (now - lastMoveRef.current < MOVE_COOLDOWN_MS) return;
+    lastMoveRef.current = now;
+
+    const [dx, dy] = DELTA[dir];
+    const next = {
+      x: Math.max(0, Math.min(COLS - 1, player.x + dx)),
+      y: Math.max(0, Math.min(ROWS - 1, player.y + dy)),
+    };
+    setPlayer(next);
+    munch(next);
+    if (troggles.some((t) => t.x === next.x && t.y === next.y)) takeHit();
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const map: Record<string, Dir> = {
+        ArrowUp: "up",
+        ArrowDown: "down",
+        ArrowLeft: "left",
+        ArrowRight: "right",
+        w: "up",
+        s: "down",
+        a: "left",
+        d: "right",
+      };
+      const dir = map[e.key];
+      if (dir) {
+        e.preventDefault();
+        move(dir);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid, gameOver, player, troggles]);
+
+  // Troggles wander the grid; landing on the player costs a life.
+  useEffect(() => {
+    if (gameOver) return;
+    const interval = setInterval(() => {
+      setTroggles((current) =>
+        current.map((t) => {
+          const options: Pos[] = [
+            { x: t.x, y: t.y },
+            { x: Math.max(0, t.x - 1), y: t.y },
+            { x: Math.min(COLS - 1, t.x + 1), y: t.y },
+            { x: t.x, y: Math.max(0, t.y - 1) },
+            { x: t.x, y: Math.min(ROWS - 1, t.y + 1) },
+          ];
+          return options[Math.floor(Math.random() * options.length)];
+        }),
+      );
+    }, TROGGLE_TICK_MS);
+    return () => clearInterval(interval);
+  }, [gameOver]);
+
+  useEffect(() => {
+    if (gameOver) return;
+    if (troggles.some((t) => t.x === player.x && t.y === player.y)) takeHit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [troggles]);
+
   function reset() {
-    setRound(0);
-    setCorrectCount(0);
-    setFeedback(null);
-    setCurrent(makeRound(words));
+    setLives(STARTING_LIVES);
+    setScore(0);
+    setWave(1);
+    setCorrectMunches(0);
+    setTotalMunches(0);
+    setFlash(null);
+    invulnerableUntilRef.current = 0;
+    startWave(1, words);
     startedAt.current = new Date();
     recorded.current = false;
   }
 
-  if (done) {
-    return (
-      <div className="flex flex-col items-center gap-4">
-        <p className="text-2xl font-bold text-slate-800">
-          {correctCount}/{ROUNDS} correct ({accuracy}%) 🎉
-        </p>
-        <button
-          onClick={reset}
-          className="rounded-lg bg-sky-600 px-4 py-2 font-semibold text-white hover:bg-sky-700"
-        >
-          Play again
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col items-center gap-6">
-      <p className="text-sm font-semibold text-slate-600">
-        Word {round + 1} of {ROUNDS} · Correct: {correctCount}
-      </p>
-      <p className="text-lg text-slate-500">Find the word:</p>
-      <p className="text-4xl font-extrabold text-slate-800">{current.target}</p>
-
-      <div className="grid grid-cols-2 gap-4">
-        {current.choices.map((word) => (
-          <button
-            key={word}
-            onClick={() => choose(word)}
-            className={`rounded-2xl px-6 py-4 text-2xl font-bold shadow ${
-              feedback && word === current.target
-                ? "bg-emerald-100 text-emerald-700"
-                : feedback === "wrong" && word !== current.target
-                  ? "bg-white text-slate-700 opacity-50"
-                  : "bg-white text-slate-700 hover:bg-sky-50"
-            }`}
-          >
-            {word}
-          </button>
-        ))}
+    <div className="flex flex-col items-center gap-3">
+      <div className="flex w-full max-w-[380px] items-center justify-between text-sm font-semibold text-slate-600">
+        <span>Score: {score}</span>
+        <span>Wave: {wave}</span>
+        <span>{"❤️".repeat(Math.max(lives, 0))}</span>
       </div>
+
+      <div className="rounded-2xl bg-white px-6 py-2 text-xl font-extrabold text-slate-800 shadow">
+        Munch: <span className="text-emerald-600">{target}</span>
+      </div>
+
+      <div className="relative">
+        <div
+          className={`grid gap-1 rounded-xl p-2 shadow-lg transition-colors ${
+            flash === "good" ? "bg-emerald-700" : flash === "bad" ? "bg-red-700" : "bg-emerald-900"
+          }`}
+          style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))` }}
+        >
+          {grid.map((row, y) =>
+            row.map((tile, x) => {
+              const isPlayer = player.x === x && player.y === y;
+              const troggleHere = troggles.some((t) => t.x === x && t.y === y);
+              return (
+                <div
+                  key={`${x}-${y}`}
+                  className={`flex h-14 w-16 items-center justify-center rounded-md text-[11px] font-bold sm:h-16 sm:w-20 sm:text-xs ${
+                    tile.eaten ? "bg-emerald-950 text-transparent" : "bg-emerald-100 text-emerald-900"
+                  }`}
+                >
+                  {isPlayer ? (
+                    <span className="text-2xl">😋</span>
+                  ) : troggleHere ? (
+                    <span className="text-2xl">👾</span>
+                  ) : (
+                    !tile.eaten && tile.word
+                  )}
+                </div>
+              );
+            }),
+          )}
+        </div>
+
+        {gameOver && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/70 text-center text-white">
+            <p className="text-2xl font-bold">Munched! 👾</p>
+            <p className="text-sm">
+              {correctMunches}/{totalMunches} correct ({accuracy}%) · Score {score}
+            </p>
+            <button
+              onClick={reset}
+              className="rounded-lg bg-sky-500 px-4 py-2 font-semibold text-white hover:bg-sky-400"
+            >
+              Play again
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 sm:hidden">
+        <span />
+        <TouchBtn label="⬆" onClick={() => move("up")} />
+        <span />
+        <TouchBtn label="⬅" onClick={() => move("left")} />
+        <TouchBtn label="⬇" onClick={() => move("down")} />
+        <TouchBtn label="➡" onClick={() => move("right")} />
+      </div>
+      <p className="hidden text-xs text-slate-400 sm:block">
+        Arrow keys to move — munch every {target.toUpperCase()} tile, dodge the monster!
+      </p>
     </div>
+  );
+}
+
+function TouchBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="h-12 w-12 rounded-xl bg-white text-xl shadow active:bg-sky-50"
+    >
+      {label}
+    </button>
   );
 }
