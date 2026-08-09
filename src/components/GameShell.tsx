@@ -12,6 +12,9 @@ import MathFacts from "./games/MathFacts";
 import Reading from "./games/Reading";
 import ConnectFour from "./games/ConnectFour";
 import SimonSays from "./games/SimonSays";
+import NumberMatching from "./games/NumberMatching";
+import Phonics from "./games/Phonics";
+import SpellingBee from "./games/SpellingBee";
 
 export default function GameShell({
   kidId,
@@ -49,6 +52,9 @@ export default function GameShell({
           {slug === "reading" && <Reading kidId={kidId} tier={readingTier} />}
           {slug === "connect-four" && <ConnectFour kidId={kidId} />}
           {slug === "simon-says" && <SimonSays kidId={kidId} />}
+          {slug === "number-matching" && <NumberMatching kidId={kidId} tier={mathTier} />}
+          {slug === "phonics" && <Phonics kidId={kidId} />}
+          {slug === "spelling-bee" && <SpellingBee kidId={kidId} tier={readingTier} />}
         </div>
       </div>
     </main>

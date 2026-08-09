@@ -10,6 +10,9 @@ import MathFacts from "@/components/games/MathFacts";
 import Reading from "@/components/games/Reading";
 import ConnectFour from "@/components/games/ConnectFour";
 import SimonSays from "@/components/games/SimonSays";
+import NumberMatching from "@/components/games/NumberMatching";
+import Phonics from "@/components/games/Phonics";
+import SpellingBee from "@/components/games/SpellingBee";
 
 const DEMO_KID_ID = "demo";
 
@@ -39,6 +42,12 @@ function GameArea({ slug, tier }: { slug: GameSlug; tier: Tier }) {
       return <ConnectFour kidId={DEMO_KID_ID} />;
     case "simon-says":
       return <SimonSays kidId={DEMO_KID_ID} />;
+    case "number-matching":
+      return <NumberMatching kidId={DEMO_KID_ID} tier={tier} />;
+    case "phonics":
+      return <Phonics kidId={DEMO_KID_ID} />;
+    case "spelling-bee":
+      return <SpellingBee kidId={DEMO_KID_ID} tier={tier} />;
   }
 }
 
