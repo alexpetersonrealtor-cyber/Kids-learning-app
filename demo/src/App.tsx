@@ -8,6 +8,8 @@ import Tetris from "@/components/games/Tetris";
 import Checkers from "@/components/games/Checkers";
 import MathFacts from "@/components/games/MathFacts";
 import Reading from "@/components/games/Reading";
+import ConnectFour from "@/components/games/ConnectFour";
+import SimonSays from "@/components/games/SimonSays";
 
 const DEMO_KID_ID = "demo";
 
@@ -33,6 +35,10 @@ function GameArea({ slug, tier }: { slug: GameSlug; tier: Tier }) {
       return <MathFacts kidId={DEMO_KID_ID} tier={tier} />;
     case "reading":
       return <Reading kidId={DEMO_KID_ID} tier={tier} />;
+    case "connect-four":
+      return <ConnectFour kidId={DEMO_KID_ID} />;
+    case "simon-says":
+      return <SimonSays kidId={DEMO_KID_ID} />;
   }
 }
 

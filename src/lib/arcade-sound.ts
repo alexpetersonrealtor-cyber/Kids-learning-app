@@ -69,3 +69,13 @@ export function playGameOver() {
     // ignore
   }
 }
+
+const SIMON_NOTE_FREQS = [329.63, 261.63, 220, 164.81]; // E4, C4, A3, E3
+
+export function playSimonNote(index: number, duration = 0.35) {
+  try {
+    tone(SIMON_NOTE_FREQS[index % SIMON_NOTE_FREQS.length], 0, duration, "sine", 0.08);
+  } catch {
+    // ignore
+  }
+}

@@ -10,6 +10,8 @@ import Tetris from "./games/Tetris";
 import Checkers from "./games/Checkers";
 import MathFacts from "./games/MathFacts";
 import Reading from "./games/Reading";
+import ConnectFour from "./games/ConnectFour";
+import SimonSays from "./games/SimonSays";
 
 export default function GameShell({
   kidId,
@@ -45,6 +47,8 @@ export default function GameShell({
           {slug === "checkers" && <Checkers kidId={kidId} />}
           {slug === "math-facts" && <MathFacts kidId={kidId} tier={mathTier} />}
           {slug === "reading" && <Reading kidId={kidId} tier={readingTier} />}
+          {slug === "connect-four" && <ConnectFour kidId={kidId} />}
+          {slug === "simon-says" && <SimonSays kidId={kidId} />}
         </div>
       </div>
     </main>

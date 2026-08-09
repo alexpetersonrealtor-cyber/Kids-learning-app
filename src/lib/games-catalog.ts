@@ -5,7 +5,9 @@ export type GameSlug =
   | "tic-tac-toe"
   | "memory-match"
   | "math-facts"
-  | "reading";
+  | "reading"
+  | "connect-four"
+  | "simon-says";
 
 export interface GameCatalogEntry {
   slug: GameSlug;
@@ -23,6 +25,8 @@ export const GAMES_CATALOG: GameCatalogEntry[] = [
   { slug: "memory-match", name: "Memory Match", emoji: "🃏", subject: "classic", description: "Find the matching pairs." },
   { slug: "math-facts", name: "Math Facts", emoji: "➕", subject: "math", description: "Quick addition & subtraction drills." },
   { slug: "reading", name: "Reading", emoji: "📖", subject: "reading", description: "Words and stories." },
+  { slug: "connect-four", name: "Connect Four", emoji: "🟡", subject: "classic", description: "Four in a row wins." },
+  { slug: "simon-says", name: "Simon Says", emoji: "🎵", subject: "classic", description: "Watch, then repeat the pattern." },
 ];
 
 export function getGame(slug: string): GameCatalogEntry | undefined {
