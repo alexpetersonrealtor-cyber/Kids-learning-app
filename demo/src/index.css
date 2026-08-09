@@ -1,0 +1,7 @@
+@import "tailwindcss";
+@source "../../src/components/games";
+@source "../../src/lib";
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
