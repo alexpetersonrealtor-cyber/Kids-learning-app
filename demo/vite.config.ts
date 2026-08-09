@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
 
 export default defineConfig({
-  base: "/kids-learning-app/",
+  base: "/Kids-learning-app/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
