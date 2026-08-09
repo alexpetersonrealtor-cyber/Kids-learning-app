@@ -58,6 +58,12 @@ export default function Snake({ kidId }: { kidId: string }) {
     }
   }, [gameOver, kidId, score]);
 
+  function queueDir(dir: Dir) {
+    if (dir !== OPPOSITE[dirRef.current]) {
+      nextDirRef.current = dir;
+    }
+  }
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const map: Record<string, Dir> = {
@@ -71,8 +77,9 @@ export default function Snake({ kidId }: { kidId: string }) {
         d: "right",
       };
       const dir = map[e.key];
-      if (dir && dir !== OPPOSITE[dirRef.current]) {
-        nextDirRef.current = dir;
+      if (dir) {
+        e.preventDefault();
+        queueDir(dir);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -160,7 +167,7 @@ export default function Snake({ kidId }: { kidId: string }) {
     } else {
       dir = dy > 0 ? "down" : "up";
     }
-    if (dir !== OPPOSITE[dirRef.current]) nextDirRef.current = dir;
+    queueDir(dir);
     touchStart.current = null;
   }
 
@@ -175,7 +182,15 @@ export default function Snake({ kidId }: { kidId: string }) {
         onTouchEnd={handleTouchEnd}
         className="max-w-full touch-none rounded-xl shadow-lg"
       />
-      <p className="text-xs text-slate-400">Arrow keys or swipe to move</p>
+      <div className="grid grid-cols-3 gap-2">
+        <span />
+        <DPadBtn label="⬆" onClick={() => queueDir("up")} />
+        <span />
+        <DPadBtn label="⬅" onClick={() => queueDir("left")} />
+        <DPadBtn label="⬇" onClick={() => queueDir("down")} />
+        <DPadBtn label="➡" onClick={() => queueDir("right")} />
+      </div>
+      <p className="text-xs text-slate-400">Arrow keys, swipe, or the buttons above</p>
       {gameOver && (
         <div className="flex flex-col items-center gap-3">
           <p className="text-xl font-bold text-slate-800">Game over! 🐍</p>
@@ -188,5 +203,16 @@ export default function Snake({ kidId }: { kidId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+function DPadBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="h-14 w-14 rounded-xl bg-white text-2xl shadow active:bg-sky-50"
+    >
+      {label}
+    </button>
   );
 }

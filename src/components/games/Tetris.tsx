@@ -211,15 +211,15 @@ export default function Tetris({ kidId }: { kidId: string }) {
         )}
       </div>
 
-      <div className="flex gap-2 sm:hidden">
+      <div className="flex gap-2">
         <TouchBtn label="⬅" onClick={() => attemptMove(-1, 0)} />
         <TouchBtn label="⟳" onClick={rotatePiece} />
         <TouchBtn label="➡" onClick={() => attemptMove(1, 0)} />
         <TouchBtn label="⬇" onClick={() => attemptMove(0, 1)} />
         <TouchBtn label="⤓" onClick={hardDrop} />
       </div>
-      <p className="hidden text-xs text-slate-400 sm:block">
-        Arrows to move/rotate, Space to hard drop, P to pause
+      <p className="text-center text-xs text-slate-400">
+        Tap the buttons, or use arrow keys + Space to hard drop, P to pause
       </p>
 
       {gameOver && (

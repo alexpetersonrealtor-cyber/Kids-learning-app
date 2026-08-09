@@ -97,6 +97,7 @@ export default function SightWords({
   const [correctMunches, setCorrectMunches] = useState(0);
   const [totalMunches, setTotalMunches] = useState(0);
   const [flash, setFlash] = useState<"good" | "bad" | null>(null);
+  const [started, setStarted] = useState(false);
 
   const lastMoveRef = useRef(0);
   const invulnerableUntilRef = useRef(0);
@@ -180,7 +181,7 @@ export default function SightWords({
   }, [grid, gameOver]);
 
   function move(dir: Dir) {
-    if (gameOver) return;
+    if (!started || gameOver) return;
     const now = performance.now();
     if (now - lastMoveRef.current < MOVE_COOLDOWN_MS) return;
     lastMoveRef.current = now;
@@ -220,7 +221,7 @@ export default function SightWords({
 
   // Troggles wander the grid; landing on the player costs a life.
   useEffect(() => {
-    if (gameOver) return;
+    if (!started || gameOver) return;
     const interval = setInterval(() => {
       setTroggles((current) =>
         current.map((t) => {
@@ -236,7 +237,7 @@ export default function SightWords({
       );
     }, TROGGLE_TICK_MS);
     return () => clearInterval(interval);
-  }, [gameOver]);
+  }, [started, gameOver]);
 
   useEffect(() => {
     if (gameOver) return;
@@ -284,7 +285,7 @@ export default function SightWords({
                 <div
                   key={`${x}-${y}`}
                   className={`flex h-14 w-16 items-center justify-center rounded-md text-[11px] font-bold sm:h-16 sm:w-20 sm:text-xs ${
-                    tile.eaten ? "bg-emerald-950 text-transparent" : "bg-emerald-100 text-emerald-900"
+                    tile.eaten ? "bg-emerald-950" : "bg-emerald-100 text-emerald-900"
                   }`}
                 >
                   {isPlayer ? (
@@ -299,6 +300,27 @@ export default function SightWords({
             }),
           )}
         </div>
+
+        {!started && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/85 p-5 text-center text-white">
+            <p className="text-2xl font-bold">How to play</p>
+            <ul className="flex flex-col gap-1.5 text-left text-sm">
+              <li>😋 You move with the arrow keys (or the buttons below).</li>
+              <li>Moving onto a tile <strong>eats it</strong> — that&rsquo;s the whole move.</li>
+              <li>
+                Eat every tile that says <strong className="text-emerald-400">{target}</strong>{" "}
+                to clear the wave.
+              </li>
+              <li>Eating a wrong word — or touching 👾 — costs a ❤️.</li>
+            </ul>
+            <button
+              onClick={() => setStarted(true)}
+              className="mt-1 rounded-lg bg-sky-500 px-5 py-2 font-semibold text-white hover:bg-sky-400"
+            >
+              Start munching!
+            </button>
+          </div>
+        )}
 
         {gameOver && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/70 text-center text-white">
@@ -316,7 +338,7 @@ export default function SightWords({
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-2 sm:hidden">
+      <div className="grid grid-cols-3 gap-2">
         <span />
         <TouchBtn label="⬆" onClick={() => move("up")} />
         <span />
@@ -324,8 +346,8 @@ export default function SightWords({
         <TouchBtn label="⬇" onClick={() => move("down")} />
         <TouchBtn label="➡" onClick={() => move("right")} />
       </div>
-      <p className="hidden text-xs text-slate-400 sm:block">
-        Arrow keys to move — munch every {target.toUpperCase()} tile, dodge the monster!
+      <p className="max-w-[380px] text-center text-xs text-slate-400">
+        😋 = you · 👾 = avoid · walk onto a {target.toUpperCase()} tile to eat it and score
       </p>
     </div>
   );

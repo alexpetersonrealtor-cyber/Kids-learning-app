@@ -356,8 +356,11 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [correctCount]);
 
-  function handleTouchMove(dir: -1 | 1) {
-    shipXRef.current = Math.max(20, Math.min(WIDTH - 20, shipXRef.current + dir * 30));
+  function pressDir(key: "ArrowLeft" | "ArrowRight") {
+    keysRef.current.add(key);
+  }
+  function releaseDir(key: "ArrowLeft" | "ArrowRight") {
+    keysRef.current.delete(key);
   }
 
   return (
@@ -395,28 +398,32 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
         )}
       </div>
 
-      <div className="flex gap-2 sm:hidden">
+      <div className="flex gap-2">
         <button
-          onTouchStart={() => handleTouchMove(-1)}
-          className="h-14 w-14 rounded-xl bg-white text-2xl shadow active:bg-sky-50"
+          onPointerDown={() => pressDir("ArrowLeft")}
+          onPointerUp={() => releaseDir("ArrowLeft")}
+          onPointerLeave={() => releaseDir("ArrowLeft")}
+          className="h-14 w-14 touch-none rounded-xl bg-white text-2xl shadow active:bg-sky-50"
         >
           ⬅
         </button>
         <button
-          onTouchStart={shoot}
-          className="h-14 w-20 rounded-xl bg-sky-500 text-lg font-bold text-white shadow active:bg-sky-600"
+          onPointerDown={shoot}
+          className="h-14 w-20 touch-none rounded-xl bg-sky-500 text-lg font-bold text-white shadow active:bg-sky-600"
         >
           FIRE
         </button>
         <button
-          onTouchStart={() => handleTouchMove(1)}
-          className="h-14 w-14 rounded-xl bg-white text-2xl shadow active:bg-sky-50"
+          onPointerDown={() => pressDir("ArrowRight")}
+          onPointerUp={() => releaseDir("ArrowRight")}
+          onPointerLeave={() => releaseDir("ArrowRight")}
+          className="h-14 w-14 touch-none rounded-xl bg-white text-2xl shadow active:bg-sky-50"
         >
           ➡
         </button>
       </div>
-      <p className="hidden text-xs text-slate-400 sm:block">
-        Arrow keys to move, Space to fire — blast the rock with the right answer!
+      <p className="text-center text-xs text-slate-400">
+        Hold ⬅➡ to steer, tap FIRE — or use arrow keys + Space
       </p>
     </div>
   );
