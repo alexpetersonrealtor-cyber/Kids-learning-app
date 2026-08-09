@@ -33,4 +33,31 @@ export const READING_PASSAGES: Passage[] = [
       { question: "How long did Jamal work on his project?", choices: ["One day", "One week", "Two weeks", "A month"], answerIndex: 2 },
     ],
   },
+  {
+    title: "The New Kid",
+    text: "Priya moved to a new school in October and didn't know anyone. At lunch, she sat alone until a boy named Dev waved her over to his table. He introduced her to his friends and showed her where the library was after school. By the end of the week, Priya had a whole group of friends to sit with.",
+    questions: [
+      { question: "When did Priya move to her new school?", choices: ["September", "October", "December", "June"], answerIndex: 1 },
+      { question: "Who invited Priya to sit with him?", choices: ["Her teacher", "Dev", "Her mom", "The principal"], answerIndex: 1 },
+      { question: "What did Dev show Priya after school?", choices: ["The gym", "The cafeteria", "The library", "The playground"], answerIndex: 2 },
+    ],
+  },
+  {
+    title: "The Camping Trip",
+    text: "The Alvarez family drove three hours to go camping by a lake. They pitched their tent, then Dad taught Sofia how to start a small campfire safely. That night they roasted marshmallows and watched for shooting stars. Sofia counted six before she fell asleep in her sleeping bag.",
+    questions: [
+      { question: "How long did the family drive?", choices: ["One hour", "Two hours", "Three hours", "Five hours"], answerIndex: 2 },
+      { question: "Who taught Sofia to start the campfire?", choices: ["Her mom", "Her dad", "A ranger", "Her brother"], answerIndex: 1 },
+      { question: "How many shooting stars did Sofia count?", choices: ["Three", "Four", "Six", "Ten"], answerIndex: 2 },
+    ],
+  },
+  {
+    title: "The Missing Library Book",
+    text: "Owen couldn't find his library book anywhere and it was due the next day. He searched his backpack, his desk, and under his bed. Finally, his little sister remembered she had borrowed it to look at the pictures. It was hiding under her pillow the whole time.",
+    questions: [
+      { question: "What was Owen looking for?", choices: ["His shoes", "His library book", "His backpack", "His homework"], answerIndex: 1 },
+      { question: "Who had actually taken the book?", choices: ["His mom", "His teacher", "His little sister", "His friend"], answerIndex: 2 },
+      { question: "Where was the book found?", choices: ["In the backpack", "Under the desk", "Under her pillow", "In the car"], answerIndex: 2 },
+    ],
+  },
 ];
