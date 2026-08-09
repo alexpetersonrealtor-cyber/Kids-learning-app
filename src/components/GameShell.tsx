@@ -1,0 +1,52 @@
+"use client";
+
+import Link from "next/link";
+import type { Tier } from "@/lib/grade-tiers";
+import type { GameSlug } from "@/lib/games-catalog";
+import TicTacToe from "./games/TicTacToe";
+import MemoryMatch from "./games/MemoryMatch";
+import Snake from "./games/Snake";
+import Tetris from "./games/Tetris";
+import Checkers from "./games/Checkers";
+import MathFacts from "./games/MathFacts";
+import Reading from "./games/Reading";
+
+export default function GameShell({
+  kidId,
+  slug,
+  gameName,
+  mathTier,
+  readingTier,
+}: {
+  kidId: string;
+  slug: GameSlug;
+  gameName: string;
+  mathTier: Tier;
+  readingTier: Tier;
+}) {
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-sky-100 to-emerald-50 px-4 py-8">
+      <div className="mx-auto flex max-w-3xl flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-slate-800">{gameName}</h1>
+          <Link
+            href={`/play/${kidId}`}
+            className="text-sm font-medium text-slate-500"
+          >
+            ← Back to games
+          </Link>
+        </div>
+
+        <div className="flex justify-center">
+          {slug === "tic-tac-toe" && <TicTacToe kidId={kidId} />}
+          {slug === "memory-match" && <MemoryMatch kidId={kidId} tier={mathTier} />}
+          {slug === "snake" && <Snake kidId={kidId} />}
+          {slug === "tetris" && <Tetris kidId={kidId} />}
+          {slug === "checkers" && <Checkers kidId={kidId} />}
+          {slug === "math-facts" && <MathFacts kidId={kidId} tier={mathTier} />}
+          {slug === "reading" && <Reading kidId={kidId} tier={readingTier} />}
+        </div>
+      </div>
+    </main>
+  );
+}

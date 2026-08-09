@@ -1,0 +1,83 @@
+// Prisma schema for the Kids Gaming & Educational App
+// Access is via a plain DATABASE_URL connection string only (Supabase today,
+// self-hosted Postgres in Docker Compose tomorrow) — no provider-specific features.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GradeLevel {
+  PRE_K
+  K
+  FIRST
+  SECOND
+  THIRD
+  FOURTH
+  FIFTH
+}
+
+enum TimerStatus {
+  ACTIVE
+  ENDED
+  EXPIRED
+}
+
+model Parent {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  kids Kid[]
+}
+
+model Kid {
+  id                String     @id @default(cuid())
+  parentId          String
+  parent            Parent     @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  name              String
+  avatar            String     @default("fox")
+  pin               String?
+  mathGradeLevel    GradeLevel @default(K)
+  readingGradeLevel GradeLevel @default(K)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  gameSessions  GameSession[]
+  timerSessions TimerSession[]
+}
+
+model GameSession {
+  id        String    @id @default(cuid())
+  kidId     String
+  kid       Kid       @relation(fields: [kidId], references: [id], onDelete: Cascade)
+  gameType  String
+  subject   String
+  skillTag  String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  score     Int?
+  accuracy  Float?
+
+  @@index([kidId, gameType])
+  @@index([kidId, subject, skillTag])
+}
+
+model TimerSession {
+  id              String      @id @default(cuid())
+  kidId           String
+  kid             Kid         @relation(fields: [kidId], references: [id], onDelete: Cascade)
+  startedAt       DateTime    @default(now())
+  durationMinutes Int
+  endedAt         DateTime?
+  status          TimerStatus @default(ACTIVE)
+
+  @@index([kidId, status])
+}
