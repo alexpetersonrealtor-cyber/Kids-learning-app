@@ -70,6 +70,16 @@ This starts a `db` (Postgres 16) and `app` (Next.js, built via the multi-stage `
 DATABASE_URL="postgresql://kidsapp:kidsapp@localhost:5432/kidsapp" npx prisma migrate deploy
 ```
 
+## Backups
+
+Supabase's free tier has no automatic backups or point-in-time recovery. `scripts/backup-db.mjs` does a logical backup — it reads every row via Prisma (not `pg_dump`, so no Postgres client tools required) and writes a single timestamped JSON file:
+
+```bash
+DATABASE_URL="<your production connection string>" node scripts/backup-db.mjs
+```
+
+The output lands in `./backups/` (gitignored — it contains PII and password hashes, never commit it). Copy it somewhere durable (cloud storage, an external drive). This same script is also what a scheduled backup routine runs before uploading the result off-box.
+
 ## Project structure
 
 - `src/app/dashboard/**` — parent-only pages (protected by `src/proxy.ts`), kid CRUD, timer controls, analytics.

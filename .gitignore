@@ -45,3 +45,6 @@ next-env.d.ts
 # demo (static Vite build for GitHub Pages)
 /demo/node_modules
 /demo/dist
+
+# database backups produced by scripts/backup-db.mjs (contain PII, never commit)
+/backups

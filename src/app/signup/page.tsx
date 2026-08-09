@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { signIn } from "@/lib/auth";
+import { isSignupAllowed } from "@/lib/signup-policy";
 import { AuthError } from "next-auth";
 
 async function signup(formData: FormData) {
@@ -16,6 +17,10 @@ async function signup(formData: FormData) {
 
   if (!email || password.length < 8) {
     redirect("/signup?error=invalid");
+  }
+
+  if (!(await isSignupAllowed(email))) {
+    redirect("/signup?error=closed");
   }
 
   const existing = await prisma.parent.findUnique({ where: { email } });
@@ -59,6 +64,11 @@ export default async function SignupPage({
           Set up the family dashboard for kid profiles, timers, and progress.
         </p>
 
+        {error === "closed" && (
+          <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            Signups are closed. Contact the account owner if you need access.
+          </p>
+        )}
         {error === "exists" && (
           <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
             An account with that email already exists.
