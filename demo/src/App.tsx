@@ -18,6 +18,7 @@ import ChessGame from "@/components/games/Chess";
 import BananaBlast from "@/components/games/BananaBlast";
 import WordBlaster from "@/components/games/WordBlaster";
 import StarHopper from "@/components/games/StarHopper";
+import RaceTrack from "@/components/games/RaceTrack";
 
 const DEMO_KID_ID = "demo";
 
@@ -55,6 +56,8 @@ function GameArea({ slug, grade }: { slug: GameSlug; grade: GradeLevel }) {
       return <WordBlaster kidId={DEMO_KID_ID} grade={grade} />;
     case "star-hopper":
       return <StarHopper kidId={DEMO_KID_ID} />;
+    case "race-track":
+      return <RaceTrack kidId={DEMO_KID_ID} />;
   }
 }
 

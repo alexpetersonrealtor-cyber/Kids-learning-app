@@ -35,7 +35,8 @@ model Parent {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  kids Kid[]
+  kids         Kid[]
+  trackRecords TrackRecord[]
 }
 
 model Kid {
@@ -52,6 +53,8 @@ model Kid {
 
   gameSessions  GameSession[]
   timerSessions TimerSession[]
+  carProgress   CarProgress?
+  trackRecords  TrackRecord[]
 }
 
 model GameSession {
@@ -80,4 +83,33 @@ model TimerSession {
   status          TimerStatus @default(ACTIVE)
 
   @@index([kidId, status])
+}
+
+// One row per kid: their racing-game currency and car customization/upgrades.
+model CarProgress {
+  id          String   @id @default(cuid())
+  kidId       String   @unique
+  kid         Kid      @relation(fields: [kidId], references: [id], onDelete: Cascade)
+  coins       Int      @default(0)
+  engineLevel Int      @default(1)
+  wheelsLevel Int      @default(1)
+  turboLevel  Int      @default(1)
+  color       String   @default("red")
+  updatedAt   DateTime @updatedAt
+}
+
+// Best time per track, scoped to the family (Parent), not per kid — whichever
+// kid under the account is fastest holds the record, matching a shared
+// household leaderboard rather than separate per-kid leaderboards.
+model TrackRecord {
+  id        String   @id @default(cuid())
+  parentId  String
+  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  trackId   String
+  kidId     String
+  kid       Kid      @relation(fields: [kidId], references: [id], onDelete: Cascade)
+  timeMs    Int
+  createdAt DateTime @default(now())
+
+  @@unique([parentId, trackId])
 }

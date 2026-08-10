@@ -20,6 +20,7 @@ import ChessGame from "./games/Chess";
 import BananaBlast from "./games/BananaBlast";
 import WordBlaster from "./games/WordBlaster";
 import StarHopper from "./games/StarHopper";
+import RaceTrack from "./games/RaceTrack";
 
 export default function GameShell({
   kidId,
@@ -66,6 +67,7 @@ export default function GameShell({
           {slug === "banana-blast" && <BananaBlast kidId={kidId} grade={mathGrade} />}
           {slug === "word-blaster" && <WordBlaster kidId={kidId} grade={readingGrade} />}
           {slug === "star-hopper" && <StarHopper kidId={kidId} />}
+          {slug === "race-track" && <RaceTrack kidId={kidId} />}
         </div>
       </div>
     </main>
