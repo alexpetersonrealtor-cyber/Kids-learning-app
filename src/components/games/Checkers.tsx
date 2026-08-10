@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import DifficultyGate from "@/components/DifficultyGate";
+import type { Difficulty } from "@/lib/difficulty";
 
 type PieceColor = "red" | "black";
 type Cell = { color: PieceColor; king: boolean } | null;
@@ -81,6 +83,66 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+type Move = { from: Pos; to: Pos; captured?: Pos };
+
+const SEARCH_DEPTH: Record<Difficulty, number> = {
+  easy: 0,
+  medium: 2,
+  hard: 4,
+  expert: 6,
+};
+
+function evaluateBoard(board: Board): number {
+  let score = 0;
+  for (const row of board) {
+    for (const cell of row) {
+      if (!cell) continue;
+      const value = cell.king ? 3 : 1;
+      score += cell.color === "red" ? value : -value;
+    }
+  }
+  return score;
+}
+
+function minimax(board: Board, depth: number, alpha: number, beta: number, maximizing: boolean): number {
+  const color: PieceColor = maximizing ? "red" : "black";
+  const moves = allMovesForColor(board, color);
+  if (depth === 0 || moves.length === 0) {
+    return evaluateBoard(board);
+  }
+  let value = maximizing ? -Infinity : Infinity;
+  for (const move of moves) {
+    const next = applyMove(board, move);
+    const childValue = minimax(next, depth - 1, alpha, beta, !maximizing);
+    if (maximizing) {
+      value = Math.max(value, childValue);
+      alpha = Math.max(alpha, value);
+    } else {
+      value = Math.min(value, childValue);
+      beta = Math.min(beta, value);
+    }
+    if (alpha >= beta) break;
+  }
+  return value;
+}
+
+function pickBestMove(board: Board, depth: number): Move {
+  const moves = allMovesForColor(board, "red");
+  let bestScore = -Infinity;
+  let bestMoves: Move[] = [];
+  for (const move of moves) {
+    const next = applyMove(board, move);
+    const score = minimax(next, depth - 1, -Infinity, Infinity, false);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMoves = [move];
+    } else if (score === bestScore) {
+      bestMoves.push(move);
+    }
+  }
+  return pickRandom(bestMoves);
+}
+
 function applyMove(board: Board, move: { from: Pos; to: Pos; captured?: Pos }): Board {
   const next = board.map((row) => [...row]);
   const piece = next[move.from.r][move.from.c];
@@ -99,6 +161,7 @@ export default function Checkers({ kidId }: { kidId: string }) {
   const [turn, setTurn] = useState<PieceColor>("black");
   const [selected, setSelected] = useState<Pos | null>(null);
   const [vsComputer, setVsComputer] = useState(true);
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [winner, setWinner] = useState<PieceColor | null>(null);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
@@ -123,7 +186,7 @@ export default function Checkers({ kidId }: { kidId: string }) {
         kidId,
         gameType: "checkers",
         subject: "classic",
-        skillTag: "checkers",
+        skillTag: vsComputer ? `checkers-${difficulty}` : "checkers-2p",
         startedAt: startedAt.current,
         score: w === "black" ? 1 : 0,
       });
@@ -153,7 +216,8 @@ export default function Checkers({ kidId }: { kidId: string }) {
       finish("black");
       return;
     }
-    const choice = pickRandom(options);
+    const depth = SEARCH_DEPTH[difficulty ?? "medium"];
+    const choice = depth === 0 ? pickRandom(options) : pickBestMove(current, depth);
     const next = applyMove(current, choice);
     setBoard(next);
     const w = checkWinner(next);
@@ -195,6 +259,16 @@ export default function Checkers({ kidId }: { kidId: string }) {
   }
 
   const legalTargets = selected ? movesFor(board, selected).map((m) => m.to) : [];
+
+  if (vsComputer && !difficulty) {
+    return (
+      <DifficultyGate
+        title="Choose a difficulty"
+        description="How strong should the computer opponent play?"
+        onSelect={setDifficulty}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col items-center gap-4">

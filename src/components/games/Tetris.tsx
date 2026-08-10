@@ -2,10 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import DifficultyGate from "@/components/DifficultyGate";
+import type { Difficulty } from "@/lib/difficulty";
 
 const COLS = 10;
 const ROWS = 20;
 const CELL = 24;
+
+const SPEED_BY_DIFFICULTY: Record<Difficulty, { start: number; perLine: number; min: number }> = {
+  easy: { start: 900, perLine: 25, min: 350 },
+  medium: { start: 700, perLine: 40, min: 180 },
+  hard: { start: 500, perLine: 45, min: 120 },
+  expert: { start: 350, perLine: 50, min: 80 },
+};
 
 type Board = (string | null)[][];
 
@@ -68,6 +77,7 @@ function collides(board: Board, cells: number[][]): boolean {
 }
 
 export default function Tetris({ kidId }: { kidId: string }) {
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [game, setGame] = useState<GameState>(initialGameState);
   const [score, setScore] = useState(0);
   const [lines, setLines] = useState(0);
@@ -76,7 +86,8 @@ export default function Tetris({ kidId }: { kidId: string }) {
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
 
-  const speed = Math.max(180, 700 - lines * 40);
+  const { start, perLine, min } = SPEED_BY_DIFFICULTY[difficulty ?? "medium"];
+  const speed = Math.max(min, start - lines * perLine);
 
   function performLock(pieceOverride?: Piece) {
     const piece = pieceOverride ?? game.piece;
@@ -133,25 +144,25 @@ export default function Tetris({ kidId }: { kidId: string }) {
   }
 
   useEffect(() => {
-    if (gameOver && !recorded.current) {
+    if (gameOver && !recorded.current && difficulty) {
       recorded.current = true;
       recordGameSession({
         kidId,
         gameType: "tetris",
         subject: "classic",
-        skillTag: "tetris",
+        skillTag: `tetris-${difficulty}`,
         startedAt: startedAt.current,
         score,
       });
     }
-  }, [gameOver, kidId, score]);
+  }, [gameOver, kidId, score, difficulty]);
 
   useEffect(() => {
-    if (gameOver || paused) return;
+    if (gameOver || paused || !difficulty) return;
     const interval = setInterval(() => attemptMove(0, 1), speed);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game, gameOver, paused, speed]);
+  }, [game, gameOver, paused, speed, difficulty]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -185,6 +196,16 @@ export default function Tetris({ kidId }: { kidId: string }) {
   game.piece.cells.forEach(([x, y]) => {
     if (y >= 0 && y < ROWS && x >= 0 && x < COLS) display[y][x] = game.piece.color;
   });
+
+  if (!difficulty) {
+    return (
+      <DifficultyGate
+        title="Choose a difficulty"
+        description="Higher difficulties drop faster and speed up quicker per line cleared."
+        onSelect={setDifficulty}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col items-center gap-4">

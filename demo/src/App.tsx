@@ -14,6 +14,7 @@ import SimonSays from "@/components/games/SimonSays";
 import NumberMatching from "@/components/games/NumberMatching";
 import Phonics from "@/components/games/Phonics";
 import SpellingBee from "@/components/games/SpellingBee";
+import ChessGame from "@/components/games/Chess";
 
 const DEMO_KID_ID = "demo";
 
@@ -43,6 +44,8 @@ function GameArea({ slug, grade }: { slug: GameSlug; grade: GradeLevel }) {
       return <Phonics kidId={DEMO_KID_ID} />;
     case "spelling-bee":
       return <SpellingBee kidId={DEMO_KID_ID} grade={grade} />;
+    case "chess":
+      return <ChessGame kidId={DEMO_KID_ID} />;
   }
 }
 

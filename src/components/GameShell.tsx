@@ -16,6 +16,7 @@ import SimonSays from "./games/SimonSays";
 import NumberMatching from "./games/NumberMatching";
 import Phonics from "./games/Phonics";
 import SpellingBee from "./games/SpellingBee";
+import ChessGame from "./games/Chess";
 
 export default function GameShell({
   kidId,
@@ -58,6 +59,7 @@ export default function GameShell({
           {slug === "number-matching" && <NumberMatching kidId={kidId} grade={mathGrade} />}
           {slug === "phonics" && <Phonics kidId={kidId} />}
           {slug === "spelling-bee" && <SpellingBee kidId={kidId} grade={readingGrade} />}
+          {slug === "chess" && <ChessGame kidId={kidId} />}
         </div>
       </div>
     </main>

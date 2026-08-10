@@ -2,6 +2,8 @@
 
 import { useMemo, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import DifficultyGate from "@/components/DifficultyGate";
+import type { Difficulty } from "@/lib/difficulty";
 
 type Cell = "X" | "O" | null;
 const LINES = [
@@ -24,8 +26,35 @@ function winner(board: Cell[]): Cell {
   return null;
 }
 
-function bestMove(board: Cell[]): number {
-  const empty = board.map((v, i) => (v ? -1 : i)).filter((i) => i >= 0);
+function emptyCells(board: Cell[]): number[] {
+  return board.map((v, i) => (v ? -1 : i)).filter((i) => i >= 0);
+}
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function easyMove(board: Cell[]): number {
+  return pickRandom(emptyCells(board));
+}
+
+function mediumMove(board: Cell[]): number {
+  const empty = emptyCells(board);
+  for (const i of empty) {
+    const copy = [...board];
+    copy[i] = "O";
+    if (winner(copy) === "O") return i;
+  }
+  for (const i of empty) {
+    const copy = [...board];
+    copy[i] = "X";
+    if (winner(copy) === "X") return i;
+  }
+  return pickRandom(empty);
+}
+
+function hardMove(board: Cell[]): number {
+  const empty = emptyCells(board);
   for (const i of empty) {
     const copy = [...board];
     copy[i] = "O";
@@ -37,10 +66,53 @@ function bestMove(board: Cell[]): number {
     if (winner(copy) === "X") return i;
   }
   if (board[4] === null) return 4;
-  return empty[Math.floor(Math.random() * empty.length)];
+  return pickRandom(empty);
 }
 
+function minimaxScore(board: Cell[], maximizing: boolean, depth: number): number {
+  const w = winner(board);
+  if (w === "O") return 10 - depth;
+  if (w === "X") return depth - 10;
+  const empty = emptyCells(board);
+  if (empty.length === 0) return 0;
+
+  let best = maximizing ? -Infinity : Infinity;
+  for (const i of empty) {
+    const copy = [...board];
+    copy[i] = maximizing ? "O" : "X";
+    const score = minimaxScore(copy, !maximizing, depth + 1);
+    best = maximizing ? Math.max(best, score) : Math.min(best, score);
+  }
+  return best;
+}
+
+function expertMove(board: Cell[]): number {
+  const empty = emptyCells(board);
+  let bestScore = -Infinity;
+  let bestMoves: number[] = [];
+  for (const i of empty) {
+    const copy = [...board];
+    copy[i] = "O";
+    const score = minimaxScore(copy, false, 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMoves = [i];
+    } else if (score === bestScore) {
+      bestMoves.push(i);
+    }
+  }
+  return pickRandom(bestMoves);
+}
+
+const MOVE_FOR_DIFFICULTY: Record<Difficulty, (board: Cell[]) => number> = {
+  easy: easyMove,
+  medium: mediumMove,
+  hard: hardMove,
+  expert: expertMove,
+};
+
 export default function TicTacToe({ kidId }: { kidId: string }) {
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [board, setBoard] = useState<Cell[]>(Array(9).fill(null));
   const [turn, setTurn] = useState<"X" | "O">("X");
   const [wins, setWins] = useState({ X: 0, O: 0, draws: 0 });
@@ -50,7 +122,7 @@ export default function TicTacToe({ kidId }: { kidId: string }) {
   const isDraw = !result && board.every((c) => c !== null);
 
   function play(i: number) {
-    if (board[i] || result || isDraw) return;
+    if (!difficulty || board[i] || result || isDraw) return;
     const next = [...board];
     next[i] = turn;
     setBoard(next);
@@ -65,7 +137,7 @@ export default function TicTacToe({ kidId }: { kidId: string }) {
     if (turn === "X") {
       setTurn("O");
       setTimeout(() => {
-        const move = bestMove(next);
+        const move = MOVE_FOR_DIFFICULTY[difficulty](next);
         const afterAi = [...next];
         afterAi[move] = "O";
         setBoard(afterAi);
@@ -90,7 +162,7 @@ export default function TicTacToe({ kidId }: { kidId: string }) {
       kidId,
       gameType: "tic-tac-toe",
       subject: "classic",
-      skillTag: "tic-tac-toe",
+      skillTag: `tic-tac-toe-${difficulty}`,
       startedAt: startedAt.current,
       score: w === "X" ? 1 : 0,
     });
@@ -100,6 +172,16 @@ export default function TicTacToe({ kidId }: { kidId: string }) {
     setBoard(Array(9).fill(null));
     setTurn("X");
     startedAt.current = new Date();
+  }
+
+  if (!difficulty) {
+    return (
+      <DifficultyGate
+        title="Choose a difficulty"
+        description="How strong should the computer opponent play?"
+        onSelect={setDifficulty}
+      />
+    );
   }
 
   return (

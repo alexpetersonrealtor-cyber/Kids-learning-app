@@ -10,7 +10,8 @@ export type GameSlug =
   | "simon-says"
   | "number-matching"
   | "phonics"
-  | "spelling-bee";
+  | "spelling-bee"
+  | "chess";
 
 export interface GameCatalogEntry {
   slug: GameSlug;
@@ -33,6 +34,7 @@ export const GAMES_CATALOG: GameCatalogEntry[] = [
   { slug: "number-matching", name: "Number Match", emoji: "🔢", subject: "math", description: "Count and pick the right number." },
   { slug: "phonics", name: "Phonics", emoji: "🔤", subject: "reading", description: "What letter does it start with?" },
   { slug: "spelling-bee", name: "Spelling Bee", emoji: "🐝", subject: "reading", description: "Build the word, letter by letter." },
+  { slug: "chess", name: "Chess", emoji: "♟️", subject: "classic", description: "Checkmate the king." },
 ];
 
 export function getGame(slug: string): GameCatalogEntry | undefined {

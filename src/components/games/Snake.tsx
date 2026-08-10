@@ -2,11 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import DifficultyGate from "@/components/DifficultyGate";
+import type { Difficulty } from "@/lib/difficulty";
 
 const GRID = 18;
 const CELL = 22;
 const SIZE = GRID * CELL;
-const TICK_MS = 140;
+
+const SPEED_BY_DIFFICULTY: Record<Difficulty, { base: number; step: number; min: number }> = {
+  easy: { base: 220, step: 0, min: 220 },
+  medium: { base: 150, step: 3, min: 90 },
+  hard: { base: 110, step: 4, min: 60 },
+  expert: { base: 85, step: 5, min: 45 },
+};
 
 type Point = { x: number; y: number };
 type Dir = "up" | "down" | "left" | "right";
@@ -38,6 +46,7 @@ export default function Snake({ kidId }: { kidId: string }) {
   const foodRef = useRef<Point>(randCell(initialSnake()));
   const touchStart = useRef<Point | null>(null);
 
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [score, setScore] = useState(0);
   const [gameOver, setGameOver] = useState(false);
   const [running, setRunning] = useState(true);
@@ -45,18 +54,18 @@ export default function Snake({ kidId }: { kidId: string }) {
   const recorded = useRef(false);
 
   useEffect(() => {
-    if (gameOver && !recorded.current) {
+    if (gameOver && !recorded.current && difficulty) {
       recorded.current = true;
       recordGameSession({
         kidId,
         gameType: "snake",
         subject: "classic",
-        skillTag: "snake",
+        skillTag: `snake-${difficulty}`,
         startedAt: startedAt.current,
         score,
       });
     }
-  }, [gameOver, kidId, score]);
+  }, [gameOver, kidId, score, difficulty]);
 
   function queueDir(dir: Dir) {
     if (dir !== OPPOSITE[dirRef.current]) {
@@ -87,10 +96,13 @@ export default function Snake({ kidId }: { kidId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || !difficulty) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
+
+    const { base, step, min } = SPEED_BY_DIFFICULTY[difficulty];
+    const tickMs = Math.max(min, base - step * score);
 
     const interval = setInterval(() => {
       dirRef.current = nextDirRef.current;
@@ -135,10 +147,10 @@ export default function Snake({ kidId }: { kidId: string }) {
         ctx.fillStyle = i === 0 ? "#4ade80" : "#22c55e";
         ctx.fillRect(seg.x * CELL, seg.y * CELL, CELL - 2, CELL - 2);
       });
-    }, TICK_MS);
+    }, tickMs);
 
     return () => clearInterval(interval);
-  }, [running]);
+  }, [running, difficulty, score]);
 
   function reset() {
     snakeRef.current = initialSnake();
@@ -169,6 +181,16 @@ export default function Snake({ kidId }: { kidId: string }) {
     }
     queueDir(dir);
     touchStart.current = null;
+  }
+
+  if (!difficulty) {
+    return (
+      <DifficultyGate
+        title="Choose a difficulty"
+        description="Higher difficulties start faster and speed up quicker as you eat."
+        onSelect={setDifficulty}
+      />
+    );
   }
 
   return (

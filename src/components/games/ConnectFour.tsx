@@ -2,9 +2,12 @@
 
 import { useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
+import DifficultyGate from "@/components/DifficultyGate";
+import type { Difficulty } from "@/lib/difficulty";
 
 const ROWS = 6;
 const COLS = 7;
+const CENTER = Math.floor(COLS / 2);
 
 type Cell = "red" | "yellow" | null;
 type Board = Cell[][];
@@ -59,7 +62,11 @@ function validColumns(board: Board): number[] {
   return cols;
 }
 
-function pickComputerColumn(board: Board): number {
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function pickMediumColumn(board: Board): number {
   const options = validColumns(board);
 
   for (const col of options) {
@@ -71,17 +78,111 @@ function pickComputerColumn(board: Board): number {
     if (result && checkWinner(result.board) === "red") return col;
   }
 
-  const center = Math.floor(COLS / 2);
-  const weighted = options.flatMap((col) =>
-    Array(COLS - Math.abs(col - center)).fill(col),
-  );
-  return weighted[Math.floor(Math.random() * weighted.length)] ?? options[0];
+  const weighted = options.flatMap((col) => Array(COLS - Math.abs(col - CENTER)).fill(col));
+  return pickRandom(weighted) ?? options[0];
+}
+
+function scoreWindow(window: Cell[]): number {
+  const yellow = window.filter((c) => c === "yellow").length;
+  const red = window.filter((c) => c === "red").length;
+  const empty = window.filter((c) => c === null).length;
+  if (yellow > 0 && red > 0) return 0;
+  if (yellow === 4) return 100000;
+  if (red === 4) return -100000;
+  if (yellow === 3 && empty === 1) return 50;
+  if (red === 3 && empty === 1) return -50;
+  if (yellow === 2 && empty === 2) return 10;
+  if (red === 2 && empty === 2) return -10;
+  if (yellow === 1 && empty === 3) return 1;
+  if (red === 1 && empty === 3) return -1;
+  return 0;
+}
+
+function evaluateBoard(board: Board): number {
+  let score = 0;
+  for (let r = 0; r < ROWS; r++) {
+    if (board[r][CENTER] === "yellow") score += 3;
+    else if (board[r][CENTER] === "red") score -= 3;
+  }
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c <= COLS - 4; c++) {
+      score += scoreWindow([board[r][c], board[r][c + 1], board[r][c + 2], board[r][c + 3]]);
+    }
+  }
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r <= ROWS - 4; r++) {
+      score += scoreWindow([board[r][c], board[r + 1][c], board[r + 2][c], board[r + 3][c]]);
+    }
+  }
+  for (let r = 0; r <= ROWS - 4; r++) {
+    for (let c = 0; c <= COLS - 4; c++) {
+      score += scoreWindow([board[r][c], board[r + 1][c + 1], board[r + 2][c + 2], board[r + 3][c + 3]]);
+    }
+  }
+  for (let r = 3; r < ROWS; r++) {
+    for (let c = 0; c <= COLS - 4; c++) {
+      score += scoreWindow([board[r][c], board[r - 1][c + 1], board[r - 2][c + 2], board[r - 3][c + 3]]);
+    }
+  }
+  return score;
+}
+
+function minimax(board: Board, depth: number, alpha: number, beta: number, maximizing: boolean): number {
+  const winner = checkWinner(board);
+  if (winner === "yellow") return 1000000 + depth;
+  if (winner === "red") return -1000000 - depth;
+
+  const cols = validColumns(board);
+  if (depth === 0 || cols.length === 0) return evaluateBoard(board);
+
+  let value = maximizing ? -Infinity : Infinity;
+  for (const col of cols) {
+    const result = dropPiece(board, col, maximizing ? "yellow" : "red");
+    if (!result) continue;
+    const childValue = minimax(result.board, depth - 1, alpha, beta, !maximizing);
+    if (maximizing) {
+      value = Math.max(value, childValue);
+      alpha = Math.max(alpha, value);
+    } else {
+      value = Math.min(value, childValue);
+      beta = Math.min(beta, value);
+    }
+    if (alpha >= beta) break;
+  }
+  return value;
+}
+
+function pickBestColumn(board: Board, depth: number): number {
+  const cols = validColumns(board);
+  let bestScore = -Infinity;
+  let bestCols: number[] = [];
+  for (const col of cols) {
+    const result = dropPiece(board, col, "yellow");
+    if (!result) continue;
+    const score = minimax(result.board, depth - 1, -Infinity, Infinity, false);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCols = [col];
+    } else if (score === bestScore) {
+      bestCols.push(col);
+    }
+  }
+  return pickRandom(bestCols) ?? cols[0];
+}
+
+const SEARCH_DEPTH: Record<Difficulty, number> = { easy: 0, medium: 0, hard: 4, expert: 6 };
+
+function pickComputerColumn(board: Board, difficulty: Difficulty): number {
+  if (difficulty === "easy") return pickRandom(validColumns(board));
+  if (difficulty === "medium") return pickMediumColumn(board);
+  return pickBestColumn(board, SEARCH_DEPTH[difficulty]);
 }
 
 export default function ConnectFour({ kidId }: { kidId: string }) {
   const [board, setBoard] = useState<Board>(emptyBoard);
   const [turn, setTurn] = useState<"red" | "yellow">("red");
   const [vsComputer, setVsComputer] = useState(true);
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [winner, setWinner] = useState<"red" | "yellow" | "draw" | null>(null);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
@@ -94,7 +195,7 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
         kidId,
         gameType: "connect-four",
         subject: "classic",
-        skillTag: "connect-four",
+        skillTag: vsComputer ? `connect-four-${difficulty}` : "connect-four-2p",
         startedAt: startedAt.current,
         score: result === "red" ? 1 : 0,
       });
@@ -115,9 +216,9 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
     const nextTurn = color === "red" ? "yellow" : "red";
     setTurn(nextTurn);
 
-    if (vsComputer && nextTurn === "yellow") {
+    if (vsComputer && nextTurn === "yellow" && difficulty) {
       setTimeout(() => {
-        const col = pickComputerColumn(next);
+        const col = pickComputerColumn(next, difficulty);
         const result = dropPiece(next, col, "yellow");
         if (result) afterDrop(result.board, "yellow");
       }, 500);
@@ -138,6 +239,16 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
     setWinner(null);
     startedAt.current = new Date();
     recorded.current = false;
+  }
+
+  if (vsComputer && !difficulty) {
+    return (
+      <DifficultyGate
+        title="Choose a difficulty"
+        description="How strong should the computer opponent play?"
+        onSelect={setDifficulty}
+      />
+    );
   }
 
   return (
