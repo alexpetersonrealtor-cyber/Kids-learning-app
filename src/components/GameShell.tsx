@@ -17,6 +17,8 @@ import NumberMatching from "./games/NumberMatching";
 import Phonics from "./games/Phonics";
 import SpellingBee from "./games/SpellingBee";
 import ChessGame from "./games/Chess";
+import BananaBlast from "./games/BananaBlast";
+import WordBlaster from "./games/WordBlaster";
 
 export default function GameShell({
   kidId,
@@ -60,6 +62,8 @@ export default function GameShell({
           {slug === "phonics" && <Phonics kidId={kidId} />}
           {slug === "spelling-bee" && <SpellingBee kidId={kidId} grade={readingGrade} />}
           {slug === "chess" && <ChessGame kidId={kidId} />}
+          {slug === "banana-blast" && <BananaBlast kidId={kidId} grade={mathGrade} />}
+          {slug === "word-blaster" && <WordBlaster kidId={kidId} grade={readingGrade} />}
         </div>
       </div>
     </main>

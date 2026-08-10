@@ -15,6 +15,8 @@ import NumberMatching from "@/components/games/NumberMatching";
 import Phonics from "@/components/games/Phonics";
 import SpellingBee from "@/components/games/SpellingBee";
 import ChessGame from "@/components/games/Chess";
+import BananaBlast from "@/components/games/BananaBlast";
+import WordBlaster from "@/components/games/WordBlaster";
 
 const DEMO_KID_ID = "demo";
 
@@ -46,6 +48,10 @@ function GameArea({ slug, grade }: { slug: GameSlug; grade: GradeLevel }) {
       return <SpellingBee kidId={DEMO_KID_ID} grade={grade} />;
     case "chess":
       return <ChessGame kidId={DEMO_KID_ID} />;
+    case "banana-blast":
+      return <BananaBlast kidId={DEMO_KID_ID} grade={grade} />;
+    case "word-blaster":
+      return <WordBlaster kidId={DEMO_KID_ID} grade={grade} />;
   }
 }
 
@@ -79,7 +85,7 @@ export default function App() {
             <div className="flex items-center justify-center gap-2">
               <label className="text-sm font-medium text-slate-600">
                 Grade level (for Math Facts / Number Match / Reading / Spelling
-                Bee / Memory Match):
+                Bee / Memory Match / Banana Blast / Word Blaster):
               </label>
               <select
                 value={grade}
