@@ -45,48 +45,132 @@ interface Coin {
   collected: boolean;
 }
 
-const GROUND_SEGMENTS: Solid[] = [
-  { x: 0, y: GROUND_Y, w: 500, h: HEIGHT - GROUND_Y },
-  { x: 580, y: GROUND_Y, w: 420, h: HEIGHT - GROUND_Y },
-  { x: 1060, y: GROUND_Y, w: 440, h: HEIGHT - GROUND_Y },
-  { x: 1600, y: GROUND_Y, w: 800, h: HEIGHT - GROUND_Y },
-];
+interface Level {
+  worldWidth: number;
+  goalX: number;
+  ground: Solid[];
+  platforms: Solid[];
+  enemies: Enemy[];
+  coins: Coin[];
+  lives: number;
+}
 
-const PLATFORMS: Solid[] = [
-  { x: 650, y: 215, w: 120, h: 15 },
-  { x: 1150, y: 200, w: 100, h: 15 },
-  { x: 1750, y: 210, w: 150, h: 15 },
-];
+// Max horizontal distance/height coverable by a single jump held at full run
+// speed the whole time, given the physics constants above — every generated
+// gap/platform height is kept comfortably under these so every level is
+// guaranteed completable.
+const MAX_JUMP_DISTANCE = MOVE_SPEED * ((2 * Math.abs(JUMP_VELOCITY)) / GRAVITY);
+const MAX_JUMP_HEIGHT = (JUMP_VELOCITY * JUMP_VELOCITY) / (2 * GRAVITY);
 
-const WORLD_WIDTH = 2400;
-const GOAL_X = 2340;
+interface LevelParams {
+  segments: number;
+  segMin: number;
+  segMax: number;
+  gapMin: number;
+  gapMax: number;
+  platformChance: number;
+  platformWidthMin: number;
+  platformWidthMax: number;
+  platformHeightMin: number;
+  platformHeightMax: number;
+  enemySpeedMin: number;
+  enemySpeedMax: number;
+  enemyPatrolFrac: number;
+  coinsPerSegment: number;
+  lives: number;
+}
 
-const DIFFICULTY_CONFIG: Record<Difficulty, { enemySpeedMul: number; lives: number }> = {
-  easy: { enemySpeedMul: 0.6, lives: 4 },
-  medium: { enemySpeedMul: 1, lives: 3 },
-  hard: { enemySpeedMul: 1.4, lives: 3 },
-  expert: { enemySpeedMul: 1.8, lives: 2 },
+const LEVEL_PARAMS: Record<Difficulty, LevelParams> = {
+  easy: {
+    segments: 4, segMin: 260, segMax: 380, gapMin: 45, gapMax: 75,
+    platformChance: 0.3, platformWidthMin: 120, platformWidthMax: 160,
+    platformHeightMin: 40, platformHeightMax: 60,
+    enemySpeedMin: 35, enemySpeedMax: 50, enemyPatrolFrac: 0.9,
+    coinsPerSegment: 3, lives: 4,
+  },
+  medium: {
+    segments: 6, segMin: 220, segMax: 340, gapMin: 60, gapMax: 90,
+    platformChance: 0.45, platformWidthMin: 100, platformWidthMax: 140,
+    platformHeightMin: 50, platformHeightMax: 70,
+    enemySpeedMin: 55, enemySpeedMax: 75, enemyPatrolFrac: 0.75,
+    coinsPerSegment: 3, lives: 3,
+  },
+  hard: {
+    segments: 8, segMin: 190, segMax: 300, gapMin: 75, gapMax: 105,
+    platformChance: 0.55, platformWidthMin: 80, platformWidthMax: 120,
+    platformHeightMin: 60, platformHeightMax: 80,
+    enemySpeedMin: 75, enemySpeedMax: 100, enemyPatrolFrac: 0.6,
+    coinsPerSegment: 4, lives: 3,
+  },
+  expert: {
+    segments: 10, segMin: 160, segMax: 260, gapMin: 90, gapMax: 120,
+    platformChance: 0.65, platformWidthMin: 60, platformWidthMax: 100,
+    platformHeightMin: 70, platformHeightMax: 95,
+    enemySpeedMin: 95, enemySpeedMax: 130, enemyPatrolFrac: 0.5,
+    coinsPerSegment: 4, lives: 2,
+  },
 };
 
-function makeEnemies(speedMul: number): Enemy[] {
-  return [
-    { x: 650, y: GROUND_Y - 26, w: 26, h: 26, minX: 620, maxX: 950, speed: 60 * speedMul, dir: 1, alive: true },
-    { x: 1150, y: GROUND_Y - 26, w: 26, h: 26, minX: 1100, maxX: 1450, speed: 70 * speedMul, dir: -1, alive: true },
-    { x: 1780, y: 210 - 26, w: 26, h: 26, minX: 1760, maxX: 1880, speed: 55 * speedMul, dir: 1, alive: true },
-  ];
+function randRange(min: number, max: number): number {
+  return min + Math.random() * (max - min);
 }
 
-function makeCoins(): Coin[] {
-  const positions: [number, number][] = [
-    [220, 240], [430, 240], [700, 180], [820, 180], [950, 240],
-    [1190, 165], [1320, 240], [1480, 240], [1790, 175], [2000, 240],
-    [2150, 240], [2280, 240],
-  ];
-  return positions.map(([x, y]) => ({ x, y, r: 9, collected: false }));
-}
+function generateLevel(difficulty: Difficulty): Level {
+  const p = LEVEL_PARAMS[difficulty];
+  const ground: Solid[] = [];
+  const platforms: Solid[] = [];
+  const enemies: Enemy[] = [];
+  const coins: Coin[] = [];
 
-function allSolids(): Solid[] {
-  return [...GROUND_SEGMENTS, ...PLATFORMS];
+  const firstSegWidth = randRange(p.segMin, p.segMax);
+  ground.push({ x: 0, y: GROUND_Y, w: firstSegWidth, h: HEIGHT - GROUND_Y });
+  for (let i = 0; i < 3; i++) {
+    coins.push({ x: randRange(40, firstSegWidth - 20), y: GROUND_Y - 40, r: 9, collected: false });
+  }
+
+  let cursorX = firstSegWidth;
+
+  for (let i = 1; i < p.segments; i++) {
+    const gapWidth = Math.min(randRange(p.gapMin, p.gapMax), MAX_JUMP_DISTANCE * 0.9);
+    const gapStart = cursorX;
+    cursorX += gapWidth;
+
+    const segWidth = randRange(p.segMin, p.segMax);
+    ground.push({ x: cursorX, y: GROUND_Y, w: segWidth, h: HEIGHT - GROUND_Y });
+
+    const patrolWidth = segWidth * p.enemyPatrolFrac;
+    const patrolStart = cursorX + (segWidth - patrolWidth) / 2;
+    enemies.push({
+      x: patrolStart,
+      y: GROUND_Y - 26,
+      w: 26,
+      h: 26,
+      minX: patrolStart,
+      maxX: patrolStart + patrolWidth,
+      speed: randRange(p.enemySpeedMin, p.enemySpeedMax),
+      dir: Math.random() < 0.5 ? 1 : -1,
+      alive: true,
+    });
+
+    for (let c = 0; c < p.coinsPerSegment; c++) {
+      coins.push({ x: cursorX + randRange(20, segWidth - 20), y: GROUND_Y - 40, r: 9, collected: false });
+    }
+
+    if (Math.random() < p.platformChance) {
+      const pw = randRange(p.platformWidthMin, p.platformWidthMax);
+      const ph = Math.min(randRange(p.platformHeightMin, p.platformHeightMax), MAX_JUMP_HEIGHT * 0.9);
+      const px = Math.max(gapStart - 15, gapStart + gapWidth / 2 - pw / 2);
+      platforms.push({ x: px, y: GROUND_Y - ph, w: pw, h: 15 });
+      coins.push({ x: px + pw / 2, y: GROUND_Y - ph - 22, r: 9, collected: false });
+    }
+
+    cursorX += segWidth;
+  }
+
+  const goalX = cursorX - 70;
+  const worldWidth = cursorX + 120;
+
+  return { worldWidth, goalX, ground, platforms, enemies, coins, lives: p.lives };
 }
 
 function loadSprites(): Record<string, HTMLImageElement> {
@@ -99,13 +183,22 @@ function loadSprites(): Record<string, HTMLImageElement> {
   return images;
 }
 
+const EMPTY_LEVEL: Level = {
+  worldWidth: WIDTH,
+  goalX: WIDTH,
+  ground: [],
+  platforms: [],
+  enemies: [],
+  coins: [],
+  lives: 0,
+};
+
 export default function StarHopper({ kidId }: { kidId: string }) {
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const keysRef = useRef<Set<string>>(new Set());
   const playerRef = useRef({ x: START_X, y: START_Y, vx: 0, vy: 0, onGround: false, facing: 1 as 1 | -1 });
-  const enemiesRef = useRef<Enemy[]>([]);
-  const coinsRef = useRef<Coin[]>(makeCoins());
+  const levelRef = useRef<Level>(EMPTY_LEVEL);
   const invulnRef = useRef(0);
   const spritesRef = useRef<Record<string, HTMLImageElement>>({});
 
@@ -123,13 +216,12 @@ export default function StarHopper({ kidId }: { kidId: string }) {
   }, []);
 
   function startGame(chosen: Difficulty) {
-    const config = DIFFICULTY_CONFIG[chosen];
+    const level = generateLevel(chosen);
+    levelRef.current = level;
     playerRef.current = { x: START_X, y: START_Y, vx: 0, vy: 0, onGround: false, facing: 1 };
-    enemiesRef.current = makeEnemies(config.enemySpeedMul);
-    coinsRef.current = makeCoins();
     invulnRef.current = 0;
     setScore(0);
-    setLives(config.lives);
+    setLives(level.lives);
     setWon(false);
     startedAt.current = new Date();
     recorded.current = false;
@@ -206,6 +298,7 @@ export default function StarHopper({ kidId }: { kidId: string }) {
     const frame = (now: number) => {
       const dt = Math.min((now - lastTime) / 1000, 0.05);
       lastTime = now;
+      const level = levelRef.current;
 
       if (!finished) {
         const player = playerRef.current;
@@ -224,12 +317,12 @@ export default function StarHopper({ kidId }: { kidId: string }) {
         player.vy = Math.min(player.vy + GRAVITY * dt, MAX_FALL_SPEED);
 
         const prevBottom = player.y + PLAYER_H;
-        player.x = Math.max(0, Math.min(WORLD_WIDTH - PLAYER_W, player.x + player.vx * dt));
+        player.x = Math.max(0, Math.min(level.worldWidth - PLAYER_W, player.x + player.vx * dt));
         player.y += player.vy * dt;
 
         player.onGround = false;
         if (player.vy >= 0) {
-          for (const solid of allSolids()) {
+          for (const solid of [...level.ground, ...level.platforms]) {
             const withinX = player.x + PLAYER_W > solid.x && player.x < solid.x + solid.w;
             const crossedTop =
               prevBottom <= solid.y && player.y + PLAYER_H >= solid.y;
@@ -245,7 +338,7 @@ export default function StarHopper({ kidId }: { kidId: string }) {
           loseLife();
         }
 
-        for (const enemy of enemiesRef.current) {
+        for (const enemy of level.enemies) {
           if (!enemy.alive) continue;
           enemy.x += enemy.speed * enemy.dir * dt;
           if (enemy.x < enemy.minX || enemy.x + enemy.w > enemy.maxX) {
@@ -272,7 +365,7 @@ export default function StarHopper({ kidId }: { kidId: string }) {
           }
         }
 
-        for (const coin of coinsRef.current) {
+        for (const coin of level.coins) {
           if (coin.collected) continue;
           const dx = player.x + PLAYER_W / 2 - coin.x;
           const dy = player.y + PLAYER_H / 2 - coin.y;
@@ -283,33 +376,33 @@ export default function StarHopper({ kidId }: { kidId: string }) {
           }
         }
 
-        if (player.x + PLAYER_W >= GOAL_X) {
+        if (player.x + PLAYER_W >= level.goalX) {
           setWon(true);
         }
       }
 
       const player = playerRef.current;
-      const cameraX = Math.max(0, Math.min(player.x - WIDTH / 2, WORLD_WIDTH - WIDTH));
+      const cameraX = Math.max(0, Math.min(player.x - WIDTH / 2, level.worldWidth - WIDTH));
       const sprites = spritesRef.current;
 
       ctx.fillStyle = "#bae6fd";
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      for (const g of GROUND_SEGMENTS) {
+      for (const g of level.ground) {
         drawTiledSolid(ctx, sprites, g, cameraX);
       }
-      for (const p of PLATFORMS) {
+      for (const p of level.platforms) {
         drawTiledSolid(ctx, sprites, p, cameraX);
       }
 
-      for (const coin of coinsRef.current) {
+      for (const coin of level.coins) {
         if (coin.collected) continue;
         if (sprites.gem?.complete) {
           ctx.drawImage(sprites.gem, coin.x - cameraX - coin.r, coin.y - coin.r, coin.r * 2, coin.r * 2);
         }
       }
 
-      for (const enemy of enemiesRef.current) {
+      for (const enemy of level.enemies) {
         if (!enemy.alive) continue;
         if (sprites.enemy?.complete) {
           ctx.drawImage(sprites.enemy, enemy.x - cameraX, enemy.y, enemy.w, enemy.h);
@@ -317,7 +410,7 @@ export default function StarHopper({ kidId }: { kidId: string }) {
       }
 
       if (sprites.flag?.complete) {
-        ctx.drawImage(sprites.flag, GOAL_X - cameraX, GROUND_Y - 90, 36, 90);
+        ctx.drawImage(sprites.flag, level.goalX - cameraX, GROUND_Y - 90, 36, 90);
       }
 
       if (invulnRef.current <= 0 || Math.floor(invulnRef.current * 10) % 2 === 0) {
@@ -350,7 +443,7 @@ export default function StarHopper({ kidId }: { kidId: string }) {
     return (
       <DifficultyGate
         title="Choose a difficulty"
-        description="Harder difficulty means faster space creatures and fewer lives."
+        description="Higher difficulty means a longer level, tighter jumps, and more (faster) space creatures."
         onSelect={startGame}
       />
     );
