@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
 import DifficultyGate from "@/components/DifficultyGate";
+import PlayerTwoGate from "@/components/PlayerTwoGate";
 import type { Difficulty } from "@/lib/difficulty";
 
 type PieceColor = "red" | "black";
@@ -162,6 +163,7 @@ export default function Checkers({ kidId }: { kidId: string }) {
   const [selected, setSelected] = useState<Pos | null>(null);
   const [vsComputer, setVsComputer] = useState(true);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [player2, setPlayer2] = useState<string | "skip" | null>(null);
   const [winner, setWinner] = useState<PieceColor | null>(null);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
@@ -182,14 +184,25 @@ export default function Checkers({ kidId }: { kidId: string }) {
     setWinner(w);
     if (!recorded.current) {
       recorded.current = true;
+      const skillTag = vsComputer ? `checkers-${difficulty}` : "checkers-2p";
       recordGameSession({
         kidId,
         gameType: "checkers",
         subject: "classic",
-        skillTag: vsComputer ? `checkers-${difficulty}` : "checkers-2p",
+        skillTag,
         startedAt: startedAt.current,
         score: w === "black" ? 1 : 0,
       });
+      if (!vsComputer && player2 && player2 !== "skip") {
+        recordGameSession({
+          kidId: player2,
+          gameType: "checkers",
+          subject: "classic",
+          skillTag,
+          startedAt: startedAt.current,
+          score: w === "red" ? 1 : 0,
+        });
+      }
     }
   }
 
@@ -270,6 +283,16 @@ export default function Checkers({ kidId }: { kidId: string }) {
     );
   }
 
+  if (!vsComputer && player2 === null) {
+    return (
+      <PlayerTwoGate
+        excludeKidId={kidId}
+        onSelect={setPlayer2}
+        onSkip={() => setPlayer2("skip")}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex items-center gap-4 text-sm font-semibold text-slate-600">
@@ -279,6 +302,7 @@ export default function Checkers({ kidId }: { kidId: string }) {
             checked={vsComputer}
             onChange={(e) => {
               setVsComputer(e.target.checked);
+              setPlayer2(null);
               reset();
             }}
           />

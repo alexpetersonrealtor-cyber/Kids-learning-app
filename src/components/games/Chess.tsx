@@ -5,6 +5,7 @@ import { Chess, type Square, type Move } from "chess.js";
 import { recordGameSession } from "@/lib/record-session";
 import { playCorrect, playHurt, playGameOver } from "@/lib/arcade-sound";
 import DifficultyGate from "@/components/DifficultyGate";
+import PlayerTwoGate from "@/components/PlayerTwoGate";
 import type { Difficulty } from "@/lib/difficulty";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -106,6 +107,7 @@ function statusText(chess: Chess): string | null {
 export default function ChessGame({ kidId }: { kidId: string }) {
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [vsComputer, setVsComputer] = useState(true);
+  const [player2, setPlayer2] = useState<string | "skip" | null>(null);
   const [pgn, setPgn] = useState("");
   const [selected, setSelected] = useState<Square | null>(null);
   const [thinking, setThinking] = useState(false);
@@ -126,15 +128,27 @@ export default function ChessGame({ kidId }: { kidId: string }) {
     if (recorded.current) return;
     recorded.current = true;
     const whiteWon = finalChess.isCheckmate() && finalChess.turn() === "b";
+    const blackWon = finalChess.isCheckmate() && finalChess.turn() === "w";
     (whiteWon ? playCorrect : playGameOver)();
+    const skillTag = vsComputer ? `chess-${difficulty}` : "chess-2p";
     recordGameSession({
       kidId,
       gameType: "chess",
       subject: "classic",
-      skillTag: vsComputer ? `chess-${difficulty}` : "chess-2p",
+      skillTag,
       startedAt: startedAt.current,
       score: whiteWon ? 1 : 0,
     });
+    if (!vsComputer && player2 && player2 !== "skip") {
+      recordGameSession({
+        kidId: player2,
+        gameType: "chess",
+        subject: "classic",
+        skillTag,
+        startedAt: startedAt.current,
+        score: blackWon ? 1 : 0,
+      });
+    }
   }
 
   function maybeComputerMove(current: Chess) {
@@ -201,6 +215,16 @@ export default function ChessGame({ kidId }: { kidId: string }) {
     );
   }
 
+  if (!vsComputer && player2 === null) {
+    return (
+      <PlayerTwoGate
+        excludeKidId={kidId}
+        onSelect={setPlayer2}
+        onSkip={() => setPlayer2("skip")}
+      />
+    );
+  }
+
   const board = chess.board();
   const checkedKingSquare = chess.isCheck()
     ? board.flat().find((sq) => sq?.type === "k" && sq.color === chess.turn())?.square
@@ -215,6 +239,7 @@ export default function ChessGame({ kidId }: { kidId: string }) {
             checked={vsComputer}
             onChange={(e) => {
               setVsComputer(e.target.checked);
+              setPlayer2(null);
               reset();
             }}
           />

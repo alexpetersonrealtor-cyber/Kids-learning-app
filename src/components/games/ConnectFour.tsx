@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
 import DifficultyGate from "@/components/DifficultyGate";
+import PlayerTwoGate from "@/components/PlayerTwoGate";
 import type { Difficulty } from "@/lib/difficulty";
 
 const ROWS = 6;
@@ -183,6 +184,7 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
   const [turn, setTurn] = useState<"red" | "yellow">("red");
   const [vsComputer, setVsComputer] = useState(true);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [player2, setPlayer2] = useState<string | "skip" | null>(null);
   const [winner, setWinner] = useState<"red" | "yellow" | "draw" | null>(null);
   const startedAt = useRef(new Date());
   const recorded = useRef(false);
@@ -191,14 +193,25 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
     setWinner(result);
     if (!recorded.current) {
       recorded.current = true;
+      const skillTag = vsComputer ? `connect-four-${difficulty}` : "connect-four-2p";
       recordGameSession({
         kidId,
         gameType: "connect-four",
         subject: "classic",
-        skillTag: vsComputer ? `connect-four-${difficulty}` : "connect-four-2p",
+        skillTag,
         startedAt: startedAt.current,
         score: result === "red" ? 1 : 0,
       });
+      if (!vsComputer && player2 && player2 !== "skip") {
+        recordGameSession({
+          kidId: player2,
+          gameType: "connect-four",
+          subject: "classic",
+          skillTag,
+          startedAt: startedAt.current,
+          score: result === "yellow" ? 1 : 0,
+        });
+      }
     }
   }
 
@@ -251,6 +264,16 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
     );
   }
 
+  if (!vsComputer && player2 === null) {
+    return (
+      <PlayerTwoGate
+        excludeKidId={kidId}
+        onSelect={setPlayer2}
+        onSkip={() => setPlayer2("skip")}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex items-center gap-4 text-sm font-semibold text-slate-600">
@@ -260,6 +283,7 @@ export default function ConnectFour({ kidId }: { kidId: string }) {
             checked={vsComputer}
             onChange={(e) => {
               setVsComputer(e.target.checked);
+              setPlayer2(null);
               reset();
             }}
           />
