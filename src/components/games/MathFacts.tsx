@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
 import { playShoot, playExplosion, playCorrect, playHurt, playGameOver } from "@/lib/arcade-sound";
-import type { Tier } from "@/lib/grade-tiers";
+import type { GradeLevel } from "@prisma/client";
 
 const WIDTH = 360;
 const HEIGHT = 480;
@@ -17,7 +17,7 @@ const ROCK_RADIUS = 26;
 interface Question {
   a: number;
   b: number;
-  op: "+" | "-";
+  op: "+" | "-" | "×" | "÷";
 }
 
 interface Rock {
@@ -46,31 +46,61 @@ function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function makeQuestion(tier: Tier): Question {
-  if (tier === "PRE_K_K") {
-    return { a: randInt(1, 5), b: randInt(1, 5), op: "+" };
+function addSub(min: number, max: number, allowSub: boolean): Question {
+  if (!allowSub || Math.random() < 0.5) {
+    return { a: randInt(min, max), b: randInt(min, max), op: "+" };
   }
-  if (tier === "FIRST_SECOND") {
-    const op: "+" | "-" = Math.random() < 0.5 ? "+" : "-";
-    if (op === "+") return { a: randInt(1, 15), b: randInt(1, 15), op };
-    const a = randInt(5, 20);
-    return { a, b: randInt(1, a), op };
+  const a = randInt(min + 1, max);
+  return { a, b: randInt(min, a), op: "-" };
+}
+
+function multiplyFacts(max: number): Question {
+  return { a: randInt(1, max), b: randInt(1, max), op: "×" };
+}
+
+function divideFacts(max: number): Question {
+  // Build from a whole-number multiplication so the division is exact.
+  const b = randInt(2, max);
+  const result = randInt(1, max);
+  return { a: b * result, b, op: "÷" };
+}
+
+function makeQuestion(grade: GradeLevel): Question {
+  switch (grade) {
+    case "PRE_K":
+      return addSub(1, 3, false);
+    case "K":
+      return addSub(1, 5, false);
+    case "FIRST":
+      return addSub(1, 10, true);
+    case "SECOND":
+      return addSub(5, 20, true);
+    case "THIRD":
+      return Math.random() < 0.6 ? addSub(10, 100, true) : multiplyFacts(5);
+    case "FOURTH":
+      return Math.random() < 0.4 ? addSub(50, 1000, true) : multiplyFacts(10);
+    case "FIFTH": {
+      const roll = Math.random();
+      if (roll < 0.4) return multiplyFacts(12);
+      if (roll < 0.75) return divideFacts(12);
+      return addSub(100, 1000, true);
+    }
   }
-  const op: "+" | "-" = Math.random() < 0.5 ? "+" : "-";
-  if (op === "+") return { a: randInt(10, 90), b: randInt(10, 90), op };
-  const a = randInt(20, 100);
-  return { a, b: randInt(1, a), op };
 }
 
 function answer(q: Question) {
-  return q.op === "+" ? q.a + q.b : q.a - q.b;
+  if (q.op === "+") return q.a + q.b;
+  if (q.op === "-") return q.a - q.b;
+  if (q.op === "×") return q.a * q.b;
+  return q.a / q.b;
 }
 
 function makeRocks(question: Question): Rock[] {
   const correctAnswer = answer(question);
+  const maxOffset = Math.max(3, Math.round(correctAnswer * 0.15) + 2);
   const distractors = new Set<number>();
   while (distractors.size < 3) {
-    const offset = randInt(1, 9) * (Math.random() < 0.5 ? -1 : 1);
+    const offset = randInt(1, maxOffset) * (Math.random() < 0.5 ? -1 : 1);
     const candidate = correctAnswer + offset;
     if (candidate !== correctAnswer && candidate >= 0) distractors.add(candidate);
   }
@@ -91,7 +121,7 @@ function makeRocks(question: Question): Rock[] {
   }));
 }
 
-export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }) {
+export default function MathFacts({ kidId, grade }: { kidId: string; grade: GradeLevel }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shipXRef = useRef(WIDTH / 2);
   const rocksRef = useRef<Rock[]>([]);
@@ -103,7 +133,7 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
   const roundEndedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
 
-  const [question, setQuestion] = useState<Question>(() => makeQuestion(tier));
+  const [question, setQuestion] = useState<Question>(() => makeQuestion(grade));
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [wave, setWave] = useState(1);
@@ -130,7 +160,7 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
       kidId,
       gameType: "math-facts",
       subject: "math",
-      skillTag: tier === "THIRD_FIFTH" ? "multi-digit-add-sub" : "add-sub-facts",
+      skillTag: `math-${grade.toLowerCase()}`,
       startedAt: startedAt.current,
       score,
       accuracy,
@@ -154,7 +184,7 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
     }
 
     setTimeout(() => {
-      const q = makeQuestion(tier);
+      const q = makeQuestion(grade);
       setQuestion(q);
       rocksRef.current = makeRocks(q);
       projectilesRef.current = [];
@@ -333,7 +363,7 @@ export default function MathFacts({ kidId, tier }: { kidId: string; tier: Tier }
     projectilesRef.current = [];
     particlesRef.current = [];
     roundEndedRef.current = false;
-    const q = makeQuestion(tier);
+    const q = makeQuestion(grade);
     setQuestion(q);
     rocksRef.current = makeRocks(q);
     setScore(0);

@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { recordGameSession } from "@/lib/record-session";
 import { playCorrect, playHurt, playGameOver } from "@/lib/arcade-sound";
 import { SPELLING_WORDS, type SpellingWord } from "@/lib/spelling-content";
-import type { Tier } from "@/lib/grade-tiers";
+import type { GradeLevel } from "@prisma/client";
 
-const TOTAL_ROUNDS = 6;
+const TOTAL_ROUNDS = 4;
 
 interface Tile {
   id: number;
@@ -32,8 +32,8 @@ function makeTiles(word: string): Tile[] {
   return shuffle(word.split("").map((letter, id) => ({ id, letter, used: false })));
 }
 
-export default function SpellingBee({ kidId, tier }: { kidId: string; tier: Tier }) {
-  const bank = SPELLING_WORDS[tier];
+export default function SpellingBee({ kidId, grade }: { kidId: string; grade: GradeLevel }) {
+  const bank = SPELLING_WORDS[grade];
   const [round, setRound] = useState(0);
   const [word, setWord] = useState<SpellingWord>(() => pickWord(bank));
   const [tiles, setTiles] = useState<Tile[]>(() => makeTiles(word.word));
@@ -57,12 +57,12 @@ export default function SpellingBee({ kidId, tier }: { kidId: string; tier: Tier
       kidId,
       gameType: "spelling-bee",
       subject: "reading",
-      skillTag: "word-builder",
+      skillTag: `word-builder-${grade.toLowerCase()}`,
       startedAt: startedAt.current,
       score: correctWords,
       accuracy,
     });
-  }, [done, kidId, correctWords, accuracy]);
+  }, [done, kidId, grade, correctWords, accuracy]);
 
   function tapTile(tile: Tile) {
     if (tile.used || done) return;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { GAMES_CATALOG, type GameSlug } from "@/lib/games-catalog";
-import type { Tier } from "@/lib/grade-tiers";
+import { GRADE_LEVELS, tierForGrade } from "@/lib/grade-tiers";
+import type { GradeLevel } from "@prisma/client";
 import TicTacToe from "@/components/games/TicTacToe";
 import MemoryMatch from "@/components/games/MemoryMatch";
 import Snake from "@/components/games/Snake";
@@ -16,18 +17,12 @@ import SpellingBee from "@/components/games/SpellingBee";
 
 const DEMO_KID_ID = "demo";
 
-const TIERS: { value: Tier; label: string }[] = [
-  { value: "PRE_K_K", label: "Pre-K – K" },
-  { value: "FIRST_SECOND", label: "1st – 2nd" },
-  { value: "THIRD_FIFTH", label: "3rd – 5th" },
-];
-
-function GameArea({ slug, tier }: { slug: GameSlug; tier: Tier }) {
+function GameArea({ slug, grade }: { slug: GameSlug; grade: GradeLevel }) {
   switch (slug) {
     case "tic-tac-toe":
       return <TicTacToe kidId={DEMO_KID_ID} />;
     case "memory-match":
-      return <MemoryMatch kidId={DEMO_KID_ID} tier={tier} />;
+      return <MemoryMatch kidId={DEMO_KID_ID} tier={tierForGrade(grade)} />;
     case "snake":
       return <Snake kidId={DEMO_KID_ID} />;
     case "tetris":
@@ -35,25 +30,25 @@ function GameArea({ slug, tier }: { slug: GameSlug; tier: Tier }) {
     case "checkers":
       return <Checkers kidId={DEMO_KID_ID} />;
     case "math-facts":
-      return <MathFacts kidId={DEMO_KID_ID} tier={tier} />;
+      return <MathFacts kidId={DEMO_KID_ID} grade={grade} />;
     case "reading":
-      return <Reading kidId={DEMO_KID_ID} tier={tier} />;
+      return <Reading kidId={DEMO_KID_ID} grade={grade} />;
     case "connect-four":
       return <ConnectFour kidId={DEMO_KID_ID} />;
     case "simon-says":
       return <SimonSays kidId={DEMO_KID_ID} />;
     case "number-matching":
-      return <NumberMatching kidId={DEMO_KID_ID} tier={tier} />;
+      return <NumberMatching kidId={DEMO_KID_ID} grade={grade} />;
     case "phonics":
       return <Phonics kidId={DEMO_KID_ID} />;
     case "spelling-bee":
-      return <SpellingBee kidId={DEMO_KID_ID} tier={tier} />;
+      return <SpellingBee kidId={DEMO_KID_ID} grade={grade} />;
   }
 }
 
 export default function App() {
   const [active, setActive] = useState<GameSlug | null>(null);
-  const [tier, setTier] = useState<Tier>("FIRST_SECOND");
+  const [grade, setGrade] = useState<GradeLevel>("SECOND");
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-sky-100 to-emerald-50 px-4 py-8">
@@ -73,23 +68,24 @@ export default function App() {
               ← Back to games
             </button>
             <div className="flex justify-center">
-              <GameArea slug={active} tier={tier} />
+              <GameArea slug={active} grade={grade} />
             </div>
           </div>
         ) : (
           <>
             <div className="flex items-center justify-center gap-2">
               <label className="text-sm font-medium text-slate-600">
-                Grade tier (for Math Facts / Reading / Memory Match):
+                Grade level (for Math Facts / Number Match / Reading / Spelling
+                Bee / Memory Match):
               </label>
               <select
-                value={tier}
-                onChange={(e) => setTier(e.target.value as Tier)}
+                value={grade}
+                onChange={(e) => setGrade(e.target.value as GradeLevel)}
                 className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
               >
-                {TIERS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
+                {GRADE_LEVELS.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
                   </option>
                 ))}
               </select>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { Tier } from "@/lib/grade-tiers";
+import type { GradeLevel } from "@prisma/client";
 import type { GameSlug } from "@/lib/games-catalog";
 import TicTacToe from "./games/TicTacToe";
 import MemoryMatch from "./games/MemoryMatch";
@@ -21,13 +22,15 @@ export default function GameShell({
   slug,
   gameName,
   mathTier,
-  readingTier,
+  mathGrade,
+  readingGrade,
 }: {
   kidId: string;
   slug: GameSlug;
   gameName: string;
   mathTier: Tier;
-  readingTier: Tier;
+  mathGrade: GradeLevel;
+  readingGrade: GradeLevel;
 }) {
   return (
     <main className="min-h-screen bg-gradient-to-b from-sky-100 to-emerald-50 px-4 py-8">
@@ -48,13 +51,13 @@ export default function GameShell({
           {slug === "snake" && <Snake kidId={kidId} />}
           {slug === "tetris" && <Tetris kidId={kidId} />}
           {slug === "checkers" && <Checkers kidId={kidId} />}
-          {slug === "math-facts" && <MathFacts kidId={kidId} tier={mathTier} />}
-          {slug === "reading" && <Reading kidId={kidId} tier={readingTier} />}
+          {slug === "math-facts" && <MathFacts kidId={kidId} grade={mathGrade} />}
+          {slug === "reading" && <Reading kidId={kidId} grade={readingGrade} />}
           {slug === "connect-four" && <ConnectFour kidId={kidId} />}
           {slug === "simon-says" && <SimonSays kidId={kidId} />}
-          {slug === "number-matching" && <NumberMatching kidId={kidId} tier={mathTier} />}
+          {slug === "number-matching" && <NumberMatching kidId={kidId} grade={mathGrade} />}
           {slug === "phonics" && <Phonics kidId={kidId} />}
-          {slug === "spelling-bee" && <SpellingBee kidId={kidId} tier={readingTier} />}
+          {slug === "spelling-bee" && <SpellingBee kidId={kidId} grade={readingGrade} />}
         </div>
       </div>
     </main>

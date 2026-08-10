@@ -1,20 +1,17 @@
 "use client";
 
-import type { Tier } from "@/lib/grade-tiers";
-import {
-  SIGHT_WORDS_PRE_K_K,
-  SIGHT_WORDS_FIRST_SECOND,
-  READING_PASSAGES,
-} from "@/lib/reading-content";
+import type { GradeLevel } from "@prisma/client";
+import { SIGHT_WORDS_BY_GRADE, passagesForGrade } from "@/lib/reading-content";
 import SightWords from "./SightWords";
 import ReadingComprehension from "./ReadingComprehension";
 
-export default function Reading({ kidId, tier }: { kidId: string; tier: Tier }) {
-  if (tier === "THIRD_FIFTH") {
-    return <ReadingComprehension kidId={kidId} passages={READING_PASSAGES} />;
+export default function Reading({ kidId, grade }: { kidId: string; grade: GradeLevel }) {
+  if (grade === "THIRD" || grade === "FOURTH" || grade === "FIFTH") {
+    return <ReadingComprehension kidId={kidId} passages={passagesForGrade(grade)} />;
   }
 
-  const words = tier === "PRE_K_K" ? SIGHT_WORDS_PRE_K_K : SIGHT_WORDS_FIRST_SECOND;
-  const skillTag = tier === "PRE_K_K" ? "sight-words-prek-k" : "sight-words-1-2";
-  return <SightWords kidId={kidId} words={words} skillTag={skillTag} />;
+  const words = SIGHT_WORDS_BY_GRADE[grade];
+  return (
+    <SightWords kidId={kidId} words={words} skillTag={`sight-words-${grade.toLowerCase()}`} />
+  );
 }

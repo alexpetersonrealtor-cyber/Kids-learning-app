@@ -29,7 +29,8 @@ export default async function GamePage({
         slug={entry.slug}
         gameName={entry.name}
         mathTier={tierForGrade(kid.mathGradeLevel)}
-        readingTier={tierForGrade(kid.readingGradeLevel)}
+        mathGrade={kid.mathGradeLevel}
+        readingGrade={kid.readingGradeLevel}
       />
     </TimerGate>
   );
