@@ -13,7 +13,8 @@ export type GameSlug =
   | "spelling-bee"
   | "chess"
   | "banana-blast"
-  | "word-blaster";
+  | "word-blaster"
+  | "star-hopper";
 
 export interface GameCatalogEntry {
   slug: GameSlug;
@@ -39,6 +40,7 @@ export const GAMES_CATALOG: GameCatalogEntry[] = [
   { slug: "chess", name: "Chess", emoji: "♟️", subject: "classic", description: "Checkmate the king." },
   { slug: "banana-blast", name: "Banana Blast", emoji: "🐒", subject: "math", description: "Toss the answer to the right monkey." },
   { slug: "word-blaster", name: "Word Blaster", emoji: "💥", subject: "reading", description: "Blast the letters to spell the word." },
+  { slug: "star-hopper", name: "Star Hopper", emoji: "🧑‍🚀", subject: "classic", description: "Run, jump, and stomp your way to the flag." },
 ];
 
 export function getGame(slug: string): GameCatalogEntry | undefined {
