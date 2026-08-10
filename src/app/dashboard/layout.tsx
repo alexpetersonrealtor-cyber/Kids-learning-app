@@ -16,6 +16,12 @@ export default function DashboardLayout({
           <Link href="/play" className="text-sm font-medium text-sky-600">
             Kid Play Screen →
           </Link>
+          <Link
+            href="/dashboard/account"
+            className="text-sm font-medium text-slate-500 hover:text-slate-700"
+          >
+            Account
+          </Link>
           <form
             action={async () => {
               "use server";
