@@ -104,8 +104,9 @@ export default function Phonics({ kidId }: { kidId: string }) {
           feedback === "correct" ? "bg-emerald-100" : feedback === "wrong" ? "bg-red-100" : "bg-white"
         }`}
       >
-        <span className="text-7xl">{current.word.emoji}</span>
-        <span className="text-lg font-semibold text-slate-500">{current.word.word}</span>
+        <span className="text-7xl" role="img" aria-label={current.word.word}>
+          {current.word.emoji}
+        </span>
       </div>
 
       <div className="grid grid-cols-4 gap-3">
