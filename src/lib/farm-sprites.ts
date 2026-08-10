@@ -1,0 +1,10 @@
+// Pixel art from Kenney's "Tiny Farm" pack (kenney.nl), CC0 license. Crop
+// icons themselves are emoji (matches the rest of this app); this pack
+// contributes the plot soil texture and tool icons. See
+// star-hopper-sprites.ts for why these are inlined as base64 data URIs
+// rather than served from a public/ folder.
+export const FARM_SPRITES = {
+  soil: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAj0lEQVR42mNsOZb5n4ECwMRAIRh4A1jQBUzm3yTPAFwaxWWFGBgYGBhePn6H2wBkzTANuAzCGwbIiqSVJRiklSUIByK603E5lehAhLni3IFrcD7MUGzeYMFlMi4/4w0DXM4XlxXCaSDLmUR1lFjAFwbYopSFlADDZjgTAwMDw5lEdcrzwplEdZwGwcSxyQMAP9osXG3AgnkAAAAASUVORK5CYII=",
+  wateringCan: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAyUlEQVR42mNgGGjAiE/SXs3wP4x98NZ5RpwGICskBNANYiKkuXHpagxXwTADAwMDE7JCGMamEZ0PM4wJWWDS1AUMDAwMDD6lzXA2slzj0tUMwlbeDD6lzQgvICvKy04gGAZvj21F4cMNqI8OZTh94QbDpKkLGEwNNOAKTl+4QTgakQNS2MqbwdLaAm7I6Qs3UNjHj55gsLS2YNjSXYuaDmCGwAzABWAasYYBNj8SShNM2BIIui3YxGHqGfElX2JSIxOhpEqqPMkAAAosWVYGXxw9AAAAAElFTkSuQmCC",
+  hoe: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAt0lEQVR42mNkQAP2aob/GfCAg7fOMyLzmUjRjE0NIzaJxqWrsWqujw7FcAkTuiJcmnHJsWBTeObiTawGmOirY4gxEasZlxwTvgAzNdBgMDXQwBuoTAwUAoww2NxVA2e/EmVlYGBgYDj5+jdhF6AnEAYGBgYPQ2EGD0NhvImJCV8qIzklIoMWVRYG1vtvGFjvv2FoUWUhLxCrrv1gqLr2g7RARAZtWhykxwIM1Nz+Q1Q0MhEKJEJyAGkUPJRzP3OjAAAAAElFTkSuQmCC",
+} as const;

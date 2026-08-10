@@ -15,7 +15,8 @@ export type GameSlug =
   | "banana-blast"
   | "word-blaster"
   | "star-hopper"
-  | "race-track";
+  | "race-track"
+  | "farm";
 
 export interface GameCatalogEntry {
   slug: GameSlug;
@@ -43,6 +44,7 @@ export const GAMES_CATALOG: GameCatalogEntry[] = [
   { slug: "word-blaster", name: "Word Blaster", emoji: "💥", subject: "reading", description: "Blast the letters to spell the word." },
   { slug: "star-hopper", name: "Star Hopper", emoji: "🧑‍🚀", subject: "classic", description: "Run, jump, and stomp your way to the flag." },
   { slug: "race-track", name: "Race Track", emoji: "🏎️", subject: "classic", description: "Race, earn coins, and upgrade your car." },
+  { slug: "farm", name: "Farm", emoji: "🚜", subject: "classic", description: "Plant, grow, harvest, and sell — build up your farm." },
 ];
 
 export function getGame(slug: string): GameCatalogEntry | undefined {
