@@ -28,11 +28,17 @@ const OVAL_WAYPOINTS = [
   { x: 700, y: 480 }, { x: 200, y: 480 }, { x: 40, y: 380 }, { x: 40, y: 220 },
 ];
 
+// A true closed figure-eight: both lobes meet at a single shared crossing
+// point (500,260), visited twice per lap (once transitioning into each
+// lobe). Every consecutive pair — including the wrap from the last point
+// back to the first — is a short, real segment of the drawn track, so lap
+// detection (which only ever chases the current waypoint) never needs a
+// giant off-track "shortcut" segment to close the loop.
 const FIGURE_EIGHT_WAYPOINTS = [
-  { x: 150, y: 150 }, { x: 500, y: 150 }, { x: 650, y: 260 }, { x: 500, y: 370 },
-  { x: 150, y: 370 }, { x: 60, y: 260 }, { x: 150, y: 150 },
-  { x: 500, y: 150 }, { x: 850, y: 150 }, { x: 940, y: 260 }, { x: 850, y: 370 },
-  { x: 500, y: 370 },
+  { x: 500, y: 260 }, // 0: crossing / start-finish
+  { x: 350, y: 150 }, { x: 150, y: 150 }, { x: 60, y: 260 }, { x: 150, y: 370 }, { x: 350, y: 370 }, // left lobe
+  { x: 500, y: 260 }, // 6: crossing again, transition into right lobe
+  { x: 650, y: 150 }, { x: 850, y: 150 }, { x: 940, y: 260 }, { x: 850, y: 370 }, { x: 650, y: 370 }, // right lobe
 ];
 
 const ZIGZAG_WAYPOINTS = [
