@@ -122,7 +122,11 @@ function generateLevel(difficulty: Difficulty): Level {
   const enemies: Enemy[] = [];
   const coins: Coin[] = [];
 
-  const firstSegWidth = randRange(p.segMin, p.segMax);
+  // A generous, fixed-width safe runway to start: a first-time player needs
+  // a few seconds to even realize a jump button exists before meeting the
+  // first pit — a short/random first segment made that pit arrive within
+  // ~2s of holding right, which reads as "falls off immediately."
+  const firstSegWidth = Math.max(440, p.segMax);
   ground.push({ x: 0, y: GROUND_Y, w: firstSegWidth, h: HEIGHT - GROUND_Y });
   for (let i = 0; i < 3; i++) {
     coins.push({ x: randRange(40, firstSegWidth - 20), y: GROUND_Y - 40, r: 9, collected: false });
@@ -131,7 +135,10 @@ function generateLevel(difficulty: Difficulty): Level {
   let cursorX = firstSegWidth;
 
   for (let i = 1; i < p.segments; i++) {
-    const gapWidth = Math.min(randRange(p.gapMin, p.gapMax), MAX_JUMP_DISTANCE * 0.9);
+    // The very first jump is always the easiest possible width, regardless
+    // of difficulty, since it's most players' first-ever encounter with a
+    // gap in this game.
+    const gapWidth = i === 1 ? p.gapMin : Math.min(randRange(p.gapMin, p.gapMax), MAX_JUMP_DISTANCE * 0.9);
     const gapStart = cursorX;
     cursorX += gapWidth;
 
