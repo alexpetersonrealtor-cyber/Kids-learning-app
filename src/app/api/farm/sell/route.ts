@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { basketToJson, effectiveGrowTimeMs, getCrop, plotsToJson, type Plot } from "@/lib/farm";
+import { basketToJson, effectiveSellPrice, getCrop } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
-  plotIndex: z.number().int().min(0),
 });
 
 export async function POST(req: NextRequest) {
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  const { kidId, plotIndex } = parsed.data;
+  const { kidId } = parsed.data;
 
   const kid = await prisma.kid.findFirst({ where: { id: kidId, parentId } });
   if (!kid) {
@@ -32,26 +31,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const plots = progress.plots as unknown as Plot[];
-  const plot = plots[plotIndex];
-  if (!plot?.crop || !plot.plantedAt) {
-    return NextResponse.json({ error: "nothing planted" }, { status: 400 });
-  }
-  const crop = getCrop(plot.crop);
-  if (!crop) {
-    return NextResponse.json({ error: "unknown crop" }, { status: 400 });
-  }
-  const readyAt = new Date(plot.plantedAt).getTime() + effectiveGrowTimeMs(crop, progress.wateringLevel);
-  if (Date.now() < readyAt) {
-    return NextResponse.json({ error: "not ready" }, { status: 400 });
+  const basket = progress.basket as unknown as string[];
+  if (basket.length === 0) {
+    return NextResponse.json({ error: "basket empty" }, { status: 400 });
   }
 
-  plots[plotIndex] = { crop: null, plantedAt: null };
-  const basket = [...(progress.basket as unknown as string[]), crop.id];
+  let earned = 0;
+  for (const cropId of basket) {
+    const crop = getCrop(cropId);
+    if (crop) earned += effectiveSellPrice(crop, progress.fertilizerLevel);
+  }
+
   const updated = await prisma.farmProgress.update({
     where: { kidId },
-    data: { plots: plotsToJson(plots), basket: basketToJson(basket) },
+    data: { coins: progress.coins + earned, basket: basketToJson([]) },
   });
 
-  return NextResponse.json({ progress: updated });
+  return NextResponse.json({ progress: updated, earned });
 }

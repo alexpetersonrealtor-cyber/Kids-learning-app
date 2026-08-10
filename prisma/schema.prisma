@@ -128,5 +128,6 @@ model FarmProgress {
   wateringLevel   Int      @default(1)
   fertilizerLevel Int      @default(1)
   plots           Json     @default("[]")
+  basket          Json     @default("[]")
   updatedAt       DateTime @updatedAt
 }

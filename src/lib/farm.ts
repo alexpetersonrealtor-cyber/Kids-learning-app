@@ -9,11 +9,17 @@ export interface Crop {
   sellPrice: number;
 }
 
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+// Idle-farm pacing: crops take real minutes-to-hours to grow, so there's a
+// reason to plant, go do something else (another game, come back later),
+// and return to collect — rather than a plot cycling in under a minute.
 export const CROPS: Crop[] = [
-  { id: "carrot", name: "Carrot", emoji: "🥕", seedCost: 5, growTimeMs: 8000, sellPrice: 12 },
-  { id: "corn", name: "Corn", emoji: "🌽", seedCost: 15, growTimeMs: 20000, sellPrice: 38 },
-  { id: "pumpkin", name: "Pumpkin", emoji: "🎃", seedCost: 40, growTimeMs: 45000, sellPrice: 100 },
-  { id: "strawberry", name: "Strawberry", emoji: "🍓", seedCost: 80, growTimeMs: 70000, sellPrice: 220 },
+  { id: "carrot", name: "Carrot", emoji: "🥕", seedCost: 5, growTimeMs: 5 * MINUTE, sellPrice: 12 },
+  { id: "corn", name: "Corn", emoji: "🌽", seedCost: 15, growTimeMs: 20 * MINUTE, sellPrice: 38 },
+  { id: "pumpkin", name: "Pumpkin", emoji: "🎃", seedCost: 40, growTimeMs: HOUR, sellPrice: 100 },
+  { id: "strawberry", name: "Strawberry", emoji: "🍓", seedCost: 80, growTimeMs: 4 * HOUR, sellPrice: 220 },
 ];
 
 export function getCrop(cropId: string): Crop | undefined {
@@ -65,4 +71,10 @@ export function emptyPlots(count: number): Plot[] {
 // call site.
 export function plotsToJson(plots: Plot[]): Prisma.InputJsonValue {
   return plots as unknown as Prisma.InputJsonValue;
+}
+
+// The basket is the list of crop ids the kid is currently carrying after
+// harvesting, waiting to be walked over to the market table and sold.
+export function basketToJson(basket: string[]): Prisma.InputJsonValue {
+  return basket as unknown as Prisma.InputJsonValue;
 }
