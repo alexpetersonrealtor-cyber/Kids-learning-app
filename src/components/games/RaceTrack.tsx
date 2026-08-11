@@ -101,9 +101,13 @@ function distToTrack(track: TrackDef, x: number, y: number): number {
 function makeCars(track: TrackDef, playerColor: CarColor): RaceCar[] {
   const otherColors = CAR_COLORS.filter((c) => c !== playerColor);
   const start = track.waypoints[0];
+  const next = track.waypoints[1];
+  // Face along the track at the start line instead of a hardcoded "up" —
+  // heading 0 only happened to match tracks whose first leg runs north.
+  const startHeading = Math.atan2(next.x - start.x, -(next.y - start.y));
   const cars: RaceCar[] = [
     {
-      x: start.x, y: start.y, heading: 0, speed: 0, waypointIndex: 1,
+      x: start.x, y: start.y, heading: startHeading, speed: 0, waypointIndex: 1,
       laps: 0, finished: false, finishTimeMs: null, isPlayer: true,
       color: playerColor, aiSpeed: 0,
     },
@@ -112,7 +116,7 @@ function makeCars(track: TrackDef, playerColor: CarColor): RaceCar[] {
     cars.push({
       x: start.x + (i + 1) * 14 - 20,
       y: start.y + (i + 1) * 12,
-      heading: 0,
+      heading: startHeading,
       speed: 0,
       waypointIndex: 1,
       laps: 0,
@@ -566,12 +570,12 @@ export default function RaceTrack({ kidId }: { kidId: string }) {
           className="max-w-full touch-none rounded-xl shadow-lg"
         />
         <div className="flex w-full max-w-[480px] items-center justify-between">
+          <TouchBtn label="⬆ Gas" onDown={() => pressKey("ArrowUp")} onUp={() => releaseKey("ArrowUp")} wide />
           <div className="flex gap-2">
             <TouchBtn label="⬅" onDown={() => pressKey("ArrowLeft")} onUp={() => releaseKey("ArrowLeft")} />
             <TouchBtn label="➡" onDown={() => pressKey("ArrowRight")} onUp={() => releaseKey("ArrowRight")} />
+            <TouchBtn label="🚀 Turbo" onDown={activateTurbo} onUp={() => {}} wide />
           </div>
-          <TouchBtn label="⬆ Gas" onDown={() => pressKey("ArrowUp")} onUp={() => releaseKey("ArrowUp")} wide />
-          <TouchBtn label="🚀 Turbo" onDown={activateTurbo} onUp={() => {}} wide />
         </div>
         <p className="text-xs text-slate-400">
           Arrow keys to drive, Space for turbo — or use the buttons above
