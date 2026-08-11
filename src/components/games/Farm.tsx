@@ -624,7 +624,7 @@ function TouchBtn({
       onPointerLeave={onUp}
       onPointerCancel={onUp}
       disabled={disabled}
-      className={`touch-none select-none ${wide ? "px-5" : "px-4"} h-12 rounded-2xl bg-white text-sm font-bold text-slate-700 shadow active:bg-sky-50 disabled:opacity-40`}
+      className={`touch-none select-none ${wide ? "px-5 text-sm" : "px-4 text-2xl"} h-12 rounded-2xl bg-white font-bold text-slate-900 shadow active:bg-sky-50 disabled:opacity-40`}
     >
       {label}
     </button>

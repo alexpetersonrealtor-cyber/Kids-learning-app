@@ -357,7 +357,7 @@ function TouchBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="h-12 w-12 rounded-xl bg-white text-xl shadow active:bg-sky-50"
+      className="h-12 w-12 rounded-xl bg-white text-2xl font-bold text-slate-900 shadow active:bg-sky-50"
     >
       {label}
     </button>

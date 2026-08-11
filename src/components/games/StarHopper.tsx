@@ -548,10 +548,14 @@ function TouchBtn({
 }) {
   return (
     <button
-      onPointerDown={onDown}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        onDown();
+      }}
       onPointerUp={onUp}
       onPointerLeave={onUp}
-      className={`${wide ? "px-8" : "px-6"} h-14 rounded-2xl bg-white text-xl font-bold text-slate-700 shadow active:bg-sky-50`}
+      onPointerCancel={onUp}
+      className={`touch-none select-none ${wide ? "px-8" : "px-6"} h-14 rounded-2xl bg-white text-xl font-bold text-slate-900 shadow active:bg-sky-50`}
     >
       {label}
     </button>
