@@ -51,11 +51,12 @@ model Kid {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  gameSessions  GameSession[]
-  timerSessions TimerSession[]
-  carProgress   CarProgress?
-  trackRecords  TrackRecord[]
-  farmProgress  FarmProgress?
+  gameSessions       GameSession[]
+  timerSessions      TimerSession[]
+  carProgress        CarProgress?
+  trackRecords       TrackRecord[]
+  farmProgress       FarmProgress?
+  starHopperProgress StarHopperProgress[]
 }
 
 model GameSession {
@@ -130,4 +131,18 @@ model FarmProgress {
   plots           Json     @default("[]")
   basket          Json     @default("[]")
   updatedAt       DateTime @updatedAt
+}
+
+// One row per (kid, difficulty) — tracks how far into that difficulty's
+// level sequence the kid has unlocked, and their best single-level score.
+model StarHopperProgress {
+  id            String   @id @default(cuid())
+  kidId         String
+  kid           Kid      @relation(fields: [kidId], references: [id], onDelete: Cascade)
+  difficulty    String
+  unlockedLevel Int      @default(1)
+  bestScore     Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([kidId, difficulty])
 }
