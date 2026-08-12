@@ -277,10 +277,10 @@ export function addToBarn(barn: Barn, itemId: string, capacity: number): boolean
 // barn — it goes into the basket the kid is physically carrying, which has
 // to be walked over to a barn and deposited. Auto-harvest skips the basket
 // entirely and deposits straight into a barn (that's the whole point of
-// buying it). Small capacity on purpose — it forces regular trips back to
-// the barn rather than letting one basket hold an unlimited haul.
+// buying it). Capped so a barn trip is still eventually required, but high
+// enough for a good long harvesting run without needing one.
 export type Basket = Record<string, number>;
-export const BASKET_CAPACITY = 8;
+export const BASKET_CAPACITY = 100;
 
 export function basketTotal(basket: Basket): number {
   return Object.values(basket).reduce((sum, n) => sum + n, 0);

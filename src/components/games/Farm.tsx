@@ -525,8 +525,12 @@ export default function Farm({ kidId }: { kidId: string }) {
 
       const sprites = spritesRef.current;
       const clockNow = currentTimeMs();
-      const cameraX = Math.max(WORLD_MIN_X, Math.min(player.x - CANVAS_W / 2, WORLD_MAX_X - CANVAS_W));
-      const cameraY = Math.max(WORLD_MIN_Y, Math.min(player.y - CANVAS_H / 2, WORLD_MAX_Y - CANVAS_H));
+      // Round the camera to whole pixels — a fractional camera offset makes
+      // every world-aligned tile edge (grass, soil, chunk borders) land on a
+      // different sub-pixel each frame, which reads as a flicker/shimmer
+      // across the whole screen while walking.
+      const cameraX = Math.round(Math.max(WORLD_MIN_X, Math.min(player.x - CANVAS_W / 2, WORLD_MAX_X - CANVAS_W)));
+      const cameraY = Math.round(Math.max(WORLD_MIN_Y, Math.min(player.y - CANVAS_H / 2, WORLD_MAX_Y - CANVAS_H)));
 
       ctx.fillStyle = "#86c46b";
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
