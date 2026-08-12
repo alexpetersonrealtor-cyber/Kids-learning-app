@@ -14,6 +14,7 @@ import {
   addToBarn,
   addToBasket,
   animalCost,
+  availableOrderItemIds,
   buildBarn,
   canBuildBarn,
   canFulfillOrder,
@@ -34,6 +35,7 @@ import {
   plantCell,
   totalBarnCapacity,
   upgradeCost,
+  MAX_CUSTOMERS,
   MAX_UPGRADE_LEVEL,
   type Animal,
   type Barn,
@@ -76,8 +78,8 @@ const DEFAULT_PROGRESS: FarmProgressState = {
   currentOrders: [],
 };
 
-const CANVAS_W = 480;
-const CANVAS_H = 420;
+const CANVAS_W = 720;
+const CANVAS_H = 600;
 const PLAYER_SPEED = 175;
 const PLAYER_SIZE = 30;
 const INTERACT_RADIUS = 42;
@@ -214,12 +216,8 @@ export default function Farm({ kidId }: { kidId: string }) {
   // whenever a sync doesn't come back with a full set.
   function ensureOrders() {
     setProgress((p) => {
-      if (p.currentOrders.length >= 3) return p;
-      const availableItemIds = [
-        ...CROPS.map((c) => c.id),
-        ...ANIMALS.filter((a) => countAnimalType(p.chunks, a.id) > 0).map((a) => a.productId),
-      ];
-      return { ...p, currentOrders: fillOrders(p.currentOrders, availableItemIds, Math.random) };
+      if (p.currentOrders.length >= MAX_CUSTOMERS) return p;
+      return { ...p, currentOrders: fillOrders(p.currentOrders, availableOrderItemIds(p.chunks), Math.random) };
     });
   }
 
@@ -991,8 +989,8 @@ export default function Farm({ kidId }: { kidId: string }) {
 
       <p className="h-4 text-sm font-semibold text-slate-600">{actionLabel}</p>
 
-      <div className="flex w-full max-w-[480px] items-center justify-between">
-        <div className="grid grid-cols-3 grid-rows-2 gap-1">
+      <div className="flex w-full max-w-[720px] items-center justify-between">
+        <div className="grid grid-cols-3 grid-rows-2 gap-2">
           <span />
           <TouchBtn label="⬆" onDown={() => pressKey("ArrowUp")} onUp={() => releaseKey("ArrowUp")} />
           <span />
@@ -1003,7 +1001,7 @@ export default function Farm({ kidId }: { kidId: string }) {
         <TouchBtn label={actionLabel} onDown={handleAction} onUp={() => {}} disabled={!canAct} wide />
       </div>
 
-      <p className="max-w-sm text-center text-xs text-slate-400">
+      <p className="max-w-md text-center text-xs text-slate-400">
         Buy land in the shop, then choose crops, animals, or a barn for each
         square. Collect into your basket and carry it to the barn — or check
         what the customers at the stand are asking for before you sell.
@@ -1036,7 +1034,7 @@ function TouchBtn({
       onPointerLeave={onUp}
       onPointerCancel={onUp}
       disabled={disabled}
-      className={`touch-none select-none ${wide ? "px-5 text-sm" : "px-4 text-2xl"} h-12 rounded-2xl bg-white font-bold text-slate-900 shadow active:bg-sky-50 disabled:opacity-40`}
+      className={`touch-none select-none ${wide ? "px-6 text-base" : "px-5 text-3xl"} h-16 rounded-2xl bg-white font-bold text-slate-900 shadow active:bg-sky-50 disabled:opacity-40`}
     >
       {label}
     </button>

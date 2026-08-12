@@ -3,11 +3,9 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  ANIMALS,
-  CROPS,
+  availableOrderItemIds,
   barnToJson,
   canFulfillOrder,
-  countAnimalType,
   fillOrders,
   ordersToJson,
   type Barn,
@@ -57,12 +55,8 @@ export async function POST(req: NextRequest) {
   if (barn[order.itemId] <= 0) delete barn[order.itemId];
 
   const chunks = progress.chunks as unknown as Chunk[];
-  const availableItemIds = [
-    ...CROPS.map((c) => c.id),
-    ...ANIMALS.filter((a) => countAnimalType(chunks, a.id) > 0).map((a) => a.productId),
-  ];
   const remainingOrders = orders.filter((_, i) => i !== orderIndex);
-  const nextOrders = fillOrders(remainingOrders, availableItemIds, Math.random);
+  const nextOrders = fillOrders(remainingOrders, availableOrderItemIds(chunks), Math.random);
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },

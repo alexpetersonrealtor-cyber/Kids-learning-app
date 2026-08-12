@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  ANIMALS,
-  CROPS,
+  availableOrderItemIds,
   barnToJson,
   chunksToJson,
-  countAnimalType,
   fillOrders,
   initialChunks,
   ordersToJson,
@@ -51,11 +49,11 @@ export async function GET(req: NextRequest) {
     now.getTime(),
   );
 
-  const availableItemIds = [
-    ...CROPS.map((c) => c.id),
-    ...ANIMALS.filter((a) => countAnimalType(simulated.chunks, a.id) > 0).map((a) => a.productId),
-  ];
-  const orders = fillOrders(progress.currentOrders as unknown as CustomerOrder[], availableItemIds, Math.random);
+  const orders = fillOrders(
+    progress.currentOrders as unknown as CustomerOrder[],
+    availableOrderItemIds(simulated.chunks),
+    Math.random,
+  );
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },

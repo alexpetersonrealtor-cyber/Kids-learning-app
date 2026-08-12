@@ -7,6 +7,7 @@ export interface Crop {
   seedCost: number;
   growTimeMs: number;
   sellPrice: number;
+  tier: number;
 }
 
 const MINUTE = 60_000;
@@ -15,11 +16,14 @@ const HOUR = 60 * MINUTE;
 // Idle-farm pacing: crops take real minutes-to-hours to grow, so there's a
 // reason to plant, go do something else (another game, come back later),
 // and return to collect — rather than a plot cycling in under a minute.
+// tier gates which items customers can ask for (see unlockedTierForChunks) —
+// kids start out only ever getting orders for tier-1 carrot/corn so the
+// economy ramps up instead of opening with a pumpkin request.
 export const CROPS: Crop[] = [
-  { id: "carrot", name: "Carrot", emoji: "🥕", seedCost: 5, growTimeMs: 5 * MINUTE, sellPrice: 12 },
-  { id: "corn", name: "Corn", emoji: "🌽", seedCost: 15, growTimeMs: 20 * MINUTE, sellPrice: 38 },
-  { id: "pumpkin", name: "Pumpkin", emoji: "🎃", seedCost: 40, growTimeMs: HOUR, sellPrice: 100 },
-  { id: "strawberry", name: "Strawberry", emoji: "🍓", seedCost: 80, growTimeMs: 4 * HOUR, sellPrice: 220 },
+  { id: "carrot", name: "Carrot", emoji: "🥕", seedCost: 5, growTimeMs: 5 * MINUTE, sellPrice: 12, tier: 1 },
+  { id: "corn", name: "Corn", emoji: "🌽", seedCost: 15, growTimeMs: 20 * MINUTE, sellPrice: 38, tier: 1 },
+  { id: "pumpkin", name: "Pumpkin", emoji: "🎃", seedCost: 40, growTimeMs: HOUR, sellPrice: 100, tier: 2 },
+  { id: "strawberry", name: "Strawberry", emoji: "🍓", seedCost: 80, growTimeMs: 4 * HOUR, sellPrice: 220, tier: 3 },
 ];
 
 export function getCrop(cropId: string): Crop | undefined {
@@ -64,20 +68,21 @@ export interface Animal {
   productName: string;
   productEmoji: string;
   sellPrice: number;
+  tier: number;
 }
 
 export const ANIMALS: Animal[] = [
   {
     id: "chicken", name: "Chicken", emoji: "🐔", purchaseCost: 100, cycleTimeMs: 10 * MINUTE,
-    productId: "egg", productName: "Egg", productEmoji: "🥚", sellPrice: 15,
+    productId: "egg", productName: "Egg", productEmoji: "🥚", sellPrice: 15, tier: 2,
   },
   {
     id: "cow", name: "Cow", emoji: "🐄", purchaseCost: 250, cycleTimeMs: 30 * MINUTE,
-    productId: "milk", productName: "Milk", productEmoji: "🥛", sellPrice: 40,
+    productId: "milk", productName: "Milk", productEmoji: "🥛", sellPrice: 40, tier: 3,
   },
   {
     id: "sheep", name: "Sheep", emoji: "🐑", purchaseCost: 400, cycleTimeMs: HOUR,
-    productId: "wool", productName: "Wool", productEmoji: "🧶", sellPrice: 80,
+    productId: "wool", productName: "Wool", productEmoji: "🧶", sellPrice: 80, tier: 3,
   },
 ];
 
@@ -322,14 +327,49 @@ export interface CustomerOrder {
 
 export const MAX_CUSTOMERS = 3;
 const ORDER_REWARD_MULTIPLIER = 1.4;
-const ORDER_MAX_QUANTITY = 4;
+
+// How much land a kid owns is a simple stand-in for "how long they've been
+// playing" — orders only draw from tier 1 (carrot, corn) until more land is
+// bought, so the very first customers are always easy, then harder/pricier
+// items phase in as the farm grows instead of showing up from turn one.
+export function unlockedTierForChunks(chunkCount: number): number {
+  if (chunkCount >= 3) return 3;
+  if (chunkCount >= 2) return 2;
+  return 1;
+}
+
+function itemTier(itemId: string): number {
+  const crop = getCrop(itemId);
+  if (crop) return crop.tier;
+  const animal = ANIMALS.find((a) => a.productId === itemId);
+  return animal?.tier ?? 1;
+}
+
+// Cheap tier-1 items only ever get asked for 1-2 at a time; pricier/slower
+// items can ask for more since they're worth the wait.
+function maxQuantityForTier(tier: number): number {
+  if (tier >= 3) return 4;
+  if (tier === 2) return 3;
+  return 2;
+}
+
+// The full set of item ids customer orders may currently draw from: crops
+// unlocked by land owned, plus products of animals the kid actually owns.
+export function availableOrderItemIds(chunks: Chunk[]): string[] {
+  const tier = unlockedTierForChunks(chunks.length);
+  return [
+    ...CROPS.filter((c) => c.tier <= tier).map((c) => c.id),
+    ...ANIMALS.filter((a) => a.tier <= tier && countAnimalType(chunks, a.id) > 0).map((a) => a.productId),
+  ];
+}
 
 export function generateOrder(availableItemIds: string[], rand: () => number): CustomerOrder | null {
   if (availableItemIds.length === 0) return null;
   const itemId = availableItemIds[Math.floor(rand() * availableItemIds.length)];
   const item = getSellableItem(itemId);
   if (!item) return null;
-  const quantity = 1 + Math.floor(rand() * ORDER_MAX_QUANTITY);
+  const maxQuantity = maxQuantityForTier(itemTier(itemId));
+  const quantity = 1 + Math.floor(rand() * maxQuantity);
   const reward = Math.round(item.sellPrice * quantity * ORDER_REWARD_MULTIPLIER);
   return { itemId, quantity, reward, createdAt: new Date().toISOString() };
 }
