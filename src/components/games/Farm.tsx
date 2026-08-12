@@ -186,6 +186,13 @@ export default function Farm({ kidId }: { kidId: string }) {
   const progressRef = useRef(progress);
   const interactionRef = useRef<Interaction>({ cell: null, nearBarn: false, nearTable: false });
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every action's own sync and the periodic auto-harvest re-poll can both be
+  // in flight at once; whichever one started first can resolve *last* and
+  // clobber newer state with a stale snapshot — the game visibly reverts
+  // for a moment (a plant vanishing, a barn count jumping back) until the
+  // newer response lands. Only ever apply the response to the most recent
+  // request that was actually sent.
+  const latestRequestIdRef = useRef(0);
 
   useEffect(() => {
     spritesRef.current = loadSprites();
@@ -224,9 +231,12 @@ export default function Farm({ kidId }: { kidId: string }) {
   }
 
   useEffect(() => {
+    const requestId = ++latestRequestIdRef.current;
     fetch(`/api/farm/progress?kidId=${kidId}`)
       .then((res) => res.json())
-      .then((data) => applyProgress(data))
+      .then((data) => {
+        if (requestId === latestRequestIdRef.current) applyProgress(data);
+      })
       .catch(() => {})
       .finally(() => {
         setLoaded(true);
@@ -246,9 +256,12 @@ export default function Farm({ kidId }: { kidId: string }) {
   useEffect(() => {
     if (!progress.autoHarvest) return;
     const interval = setInterval(() => {
+      const requestId = ++latestRequestIdRef.current;
       fetch(`/api/farm/progress?kidId=${kidId}`)
         .then((res) => res.json())
-        .then((data) => applyProgress(data))
+        .then((data) => {
+          if (requestId === latestRequestIdRef.current) applyProgress(data);
+        })
         .catch(() => {});
     }, 15000);
     return () => clearInterval(interval);
@@ -258,6 +271,7 @@ export default function Farm({ kidId }: { kidId: string }) {
   // the server in the background — without this the game is unplayable
   // wherever there's no backend to round-trip through (like the static demo).
   function syncInBackground(url: string, body: unknown) {
+    const requestId = ++latestRequestIdRef.current;
     fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -265,7 +279,7 @@ export default function Farm({ kidId }: { kidId: string }) {
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) applyProgress(data);
+        if (data && requestId === latestRequestIdRef.current) applyProgress(data);
       })
       .catch(() => {});
   }
