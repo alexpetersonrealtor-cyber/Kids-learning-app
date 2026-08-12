@@ -4,23 +4,27 @@ import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  addManyToBarn,
+  CELLS_PER_CHUNK,
+  addToBarn,
   addToBasket,
-  animalPensToJson,
-  barnCapacityForLevel,
   barnToJson,
   basketToJson,
-  getAnimal,
-  getPen,
-  penState,
-  type AnimalPens,
+  cellSellableItemId,
+  cellState,
+  chunksToJson,
+  collectAnimalCell,
+  getSellableItem,
+  harvestCropCell,
+  totalBarnCapacity,
   type Barn,
   type Basket,
+  type Chunk,
 } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
-  animalId: z.string().min(1),
+  chunkIndex: z.number().int().min(0),
+  cellIndex: z.number().int().min(0).max(CELLS_PER_CHUNK - 1),
 });
 
 export async function POST(req: NextRequest) {
@@ -34,12 +38,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  const { kidId, animalId } = parsed.data;
-
-  const animal = getAnimal(animalId);
-  if (!animal) {
-    return NextResponse.json({ error: "unknown animal" }, { status: 400 });
-  }
+  const { kidId, chunkIndex, cellIndex } = parsed.data;
 
   const kid = await prisma.kid.findFirst({ where: { id: kidId, parentId } });
   if (!kid) {
@@ -51,30 +50,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const pens = progress.animalPens as unknown as AnimalPens;
-  const pen = getPen(pens, animalId);
-  if (penState(pen, animal, Date.now()) !== "ready") {
+  const chunks = progress.chunks as unknown as Chunk[];
+  const chunk = chunks[chunkIndex];
+  const cell = chunk?.cells[cellIndex];
+  if (!cell) {
+    return NextResponse.json({ error: "unknown cell" }, { status: 400 });
+  }
+  if (cellState(cell, progress.wateringLevel, Date.now()) !== "ready") {
     return NextResponse.json({ error: "not ready" }, { status: 400 });
   }
+  const itemId = cellSellableItemId(cell);
+  const item = itemId ? getSellableItem(itemId) : undefined;
+  if (!itemId || !item) {
+    return NextResponse.json({ error: "unknown item" }, { status: 400 });
+  }
+
+  const nextCell = cell.content === "crop" ? harvestCropCell() : collectAnimalCell(cell);
+  const nextChunks = chunks.map((c, ci) =>
+    ci !== chunkIndex ? c : { ...c, cells: c.cells.map((cell2, i) => (i === cellIndex ? nextCell : cell2)) },
+  );
 
   let data: Prisma.FarmProgressUpdateInput;
   if (progress.autoHarvest) {
     const barn = progress.barn as unknown as Barn;
-    const capacity = barnCapacityForLevel(progress.barnLevel);
-    const added = addManyToBarn(barn, animal.productId, pen.count, capacity);
-    if (added < pen.count) {
+    if (!addToBarn(barn, itemId, totalBarnCapacity(chunks))) {
       return NextResponse.json({ error: "barn full" }, { status: 400 });
     }
-    pens[animalId] = { ...pen, lastCollectedAt: new Date().toISOString() };
-    data = { barn: barnToJson(barn), animalPens: animalPensToJson(pens) };
+    data = { chunks: chunksToJson(nextChunks), barn: barnToJson(barn) };
   } else {
     const basket = progress.basket as unknown as Basket;
-    const added = addToBasket(basket, animal.productId, pen.count);
-    if (added < pen.count) {
+    if (addToBasket(basket, itemId, 1) === 0) {
       return NextResponse.json({ error: "basket full" }, { status: 400 });
     }
-    pens[animalId] = { ...pen, lastCollectedAt: new Date().toISOString() };
-    data = { basket: basketToJson(basket), animalPens: animalPensToJson(pens) };
+    data = { chunks: chunksToJson(nextChunks), basket: basketToJson(basket) };
   }
 
   const updated = await prisma.farmProgress.update({ where: { kidId }, data });

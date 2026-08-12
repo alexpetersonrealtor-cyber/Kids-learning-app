@@ -116,30 +116,28 @@ model TrackRecord {
   @@unique([parentId, trackId])
 }
 
-// One row per kid: their farm-game currency, land, upgrades, and plot state.
-// Plots are small/bounded (max 10) so they're stored as a JSON array rather
-// than a separate table — each entry is either null (empty) or
-// { crop: string, plantedAt: ISO string }. animalPens is a JSON object keyed
-// by animal id ({ capacity, count, lastCollectedAt }) — see src/lib/farm.ts.
-// barn is a JSON object keyed by sellable item id -> quantity. Selling only
-// ever happens by fulfilling currentOrder during an active session; auto
-// harvest/plant may run offline (see lastAutoTickAt) but never sells.
+// One row per kid: their farm-game currency, upgrades, and world state.
+// chunks is a JSON array of 3x3 land blocks ({ cx, cy, cells: Cell[9] }) —
+// the world grows outward in every direction as chunks are bought, and each
+// cell is individually assigned to a crop, an animal, or (in groups of 4)
+// a barn. barn/basket are JSON objects keyed by sellable item id ->
+// quantity. currentOrders is a JSON array of up to MAX_CUSTOMERS orders;
+// selling only ever happens by fulfilling one during an active session —
+// auto harvest/plant may run offline (see lastAutoTickAt) but never sells.
+// See src/lib/farm.ts for all of the above shapes.
 model FarmProgress {
   id              String   @id @default(cuid())
   kidId           String   @unique
   kid             Kid      @relation(fields: [kidId], references: [id], onDelete: Cascade)
   coins           Int      @default(50)
-  landLevel       Int      @default(4)
   wateringLevel   Int      @default(1)
   fertilizerLevel Int      @default(1)
-  barnLevel       Int      @default(1)
   autoHarvest     Boolean  @default(false)
   autoPlant       Boolean  @default(false)
-  plots           Json     @default("[]")
-  animalPens      Json     @default("{}")
+  chunks          Json     @default("[]")
   barn            Json     @default("{}")
   basket          Json     @default("{}")
-  currentOrder    Json?
+  currentOrders   Json     @default("[]")
   lastAutoTickAt  DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

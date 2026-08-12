@@ -7,16 +7,17 @@ import {
   CROPS,
   barnToJson,
   canFulfillOrder,
-  generateOrder,
-  getPen,
-  orderToJson,
-  type AnimalPens,
+  countAnimalType,
+  fillOrders,
+  ordersToJson,
   type Barn,
+  type Chunk,
   type CustomerOrder,
 } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
+  orderIndex: z.number().int().min(0),
 });
 
 export async function POST(req: NextRequest) {
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  const { kidId } = parsed.data;
+  const { kidId, orderIndex } = parsed.data;
 
   const kid = await prisma.kid.findFirst({ where: { id: kidId, parentId } });
   if (!kid) {
@@ -42,7 +43,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const order = progress.currentOrder as unknown as CustomerOrder | null;
+  const orders = progress.currentOrders as unknown as CustomerOrder[];
+  const order = orders[orderIndex];
   if (!order) {
     return NextResponse.json({ error: "no active order" }, { status: 400 });
   }
@@ -54,19 +56,20 @@ export async function POST(req: NextRequest) {
   barn[order.itemId] = (barn[order.itemId] ?? 0) - order.quantity;
   if (barn[order.itemId] <= 0) delete barn[order.itemId];
 
-  const pens = progress.animalPens as unknown as AnimalPens;
+  const chunks = progress.chunks as unknown as Chunk[];
   const availableItemIds = [
     ...CROPS.map((c) => c.id),
-    ...ANIMALS.filter((a) => getPen(pens, a.id).count > 0).map((a) => a.productId),
+    ...ANIMALS.filter((a) => countAnimalType(chunks, a.id) > 0).map((a) => a.productId),
   ];
-  const nextOrder = generateOrder(availableItemIds, Math.random);
+  const remainingOrders = orders.filter((_, i) => i !== orderIndex);
+  const nextOrders = fillOrders(remainingOrders, availableItemIds, Math.random);
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },
     data: {
       coins: progress.coins + order.reward,
       barn: barnToJson(barn),
-      currentOrder: nextOrder ? orderToJson(nextOrder) : undefined,
+      currentOrders: ordersToJson(nextOrders),
     },
   });
 

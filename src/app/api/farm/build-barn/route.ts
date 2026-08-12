@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { animalPensToJson, getAnimal, getPen, MAX_PEN_CAPACITY, penExpandCost, type AnimalPens } from "@/lib/farm";
+import { BARN_BUILD_COST, buildBarn, canBuildBarn, chunksToJson, type Chunk } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
-  animalId: z.string().min(1),
+  chunkIndex: z.number().int().min(0),
 });
 
 export async function POST(req: NextRequest) {
@@ -20,12 +20,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  const { kidId, animalId } = parsed.data;
-
-  const animal = getAnimal(animalId);
-  if (!animal) {
-    return NextResponse.json({ error: "unknown animal" }, { status: 400 });
-  }
+  const { kidId, chunkIndex } = parsed.data;
 
   const kid = await prisma.kid.findFirst({ where: { id: kidId, parentId } });
   if (!kid) {
@@ -37,20 +32,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const pens = progress.animalPens as unknown as AnimalPens;
-  const pen = getPen(pens, animalId);
-  if (pen.capacity >= MAX_PEN_CAPACITY) {
-    return NextResponse.json({ error: "max capacity" }, { status: 400 });
+  const chunks = progress.chunks as unknown as Chunk[];
+  const chunk = chunks[chunkIndex];
+  if (!chunk) {
+    return NextResponse.json({ error: "unknown chunk" }, { status: 400 });
   }
-  const cost = penExpandCost(animal, pen.capacity);
-  if (progress.coins < cost) {
+  if (!canBuildBarn(chunk)) {
+    return NextResponse.json({ error: "not enough empty cells" }, { status: 400 });
+  }
+  if (progress.coins < BARN_BUILD_COST) {
     return NextResponse.json({ error: "not enough coins" }, { status: 400 });
   }
 
-  pens[animalId] = { ...pen, capacity: pen.capacity + 1 };
+  const nextChunks = chunks.map((c, ci) => (ci === chunkIndex ? buildBarn(c) : c));
+
   const updated = await prisma.farmProgress.update({
     where: { kidId },
-    data: { coins: progress.coins - cost, animalPens: animalPensToJson(pens) },
+    data: { coins: progress.coins - BARN_BUILD_COST, chunks: chunksToJson(nextChunks) },
   });
 
   return NextResponse.json({ progress: updated });

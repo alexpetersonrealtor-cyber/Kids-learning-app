@@ -6,43 +6,41 @@ import {
   ANIMALS,
   AUTO_HARVEST_COST,
   AUTO_PLANT_COST,
+  BARN_BUILD_COST,
+  CHUNK_OFFSETS,
+  CHUNK_SIZE,
   CROPS,
-  MAX_BARN_LEVEL,
-  MAX_LAND,
-  MAX_PEN_CAPACITY,
-  MAX_UPGRADE_LEVEL,
-  STARTING_LAND,
-  addManyToBarn,
+  MAX_CHUNKS,
   addToBarn,
   addToBasket,
   animalCost,
-  barnCapacityForLevel,
-  barnTotal,
-  barnUpgradeCost,
-  basketTotal,
+  buildBarn,
+  canBuildBarn,
   canFulfillOrder,
+  cellSellableItemId,
+  cellState,
+  chunkCost,
+  collectAnimalCell,
+  countAnimalType,
   depositBasket,
   effectiveSellPrice,
-  emptyAnimalPens,
-  emptyPlots,
-  generateOrder,
+  emptyChunk,
+  fillOrders,
   getAnimal,
   getCrop,
-  getPen,
   getSellableItem,
-  growProgress,
-  landCost,
-  penExpandCost,
-  penProgress,
-  penState,
-  plotState,
+  harvestCropCell,
+  initialChunks,
+  plantCell,
+  totalBarnCapacity,
   upgradeCost,
+  MAX_UPGRADE_LEVEL,
   type Animal,
-  type AnimalPens,
   type Barn,
   type Basket,
+  type Cell,
+  type Chunk,
   type CustomerOrder,
-  type Plot,
 } from "@/lib/farm";
 
 // See RaceTrack.tsx / StarHopper.tsx for why direct Date.now()/performance.now()
@@ -56,63 +54,70 @@ function currentTimeMs(): number {
 
 interface FarmProgressState {
   coins: number;
-  landLevel: number;
   wateringLevel: number;
   fertilizerLevel: number;
-  barnLevel: number;
   autoHarvest: boolean;
   autoPlant: boolean;
-  plots: Plot[];
-  animalPens: AnimalPens;
+  chunks: Chunk[];
   barn: Barn;
   basket: Basket;
-  currentOrder: CustomerOrder | null;
+  currentOrders: CustomerOrder[];
 }
 
 const DEFAULT_PROGRESS: FarmProgressState = {
   coins: 50,
-  landLevel: STARTING_LAND,
   wateringLevel: 1,
   fertilizerLevel: 1,
-  barnLevel: 1,
   autoHarvest: false,
   autoPlant: false,
-  plots: emptyPlots(STARTING_LAND),
-  animalPens: emptyAnimalPens(),
+  chunks: initialChunks(),
   barn: {},
   basket: {},
-  currentOrder: null,
+  currentOrders: [],
 };
 
 const CANVAS_W = 480;
-const CANVAS_H = 380;
-const WORLD_W = 1650;
+const CANVAS_H = 420;
 const PLAYER_SPEED = 175;
 const PLAYER_SIZE = 30;
-const INTERACT_RADIUS = 48;
+const INTERACT_RADIUS = 42;
 const BUILDING_RADIUS = 54;
-const ROW_Y = 190;
 
 interface Point {
   x: number;
   y: number;
 }
 
-const BARN_POS: Point = { x: 100, y: ROW_Y };
-const TABLE_POS: Point = { x: 240, y: ROW_Y };
+const BARN_POS: Point = { x: 100, y: 190 };
+const TABLE_POS: Point = { x: 240, y: 190 };
 
-// Every purchased plot/pen sits farther out along the row than the last —
-// buying more land is literally walking farther from the barn, matching
-// the rising cost curve.
-const CROP_POSITIONS: Point[] = Array.from({ length: MAX_LAND }, (_, i) => ({
-  x: 380 + i * 90,
-  y: ROW_Y,
-}));
+// World layout for the chunk grid: chunk (0,0) sits to the right of the
+// fixed barn/table landmarks, and every other chunk offset is placed
+// relative to it — the world grows outward in every direction as chunks
+// are bought, instead of along one line.
+const CELL_SIZE = 62;
+const CELL_GAP = 8;
+const CHUNK_PIXELS = 250;
+const CHUNK_CONTENT_SIZE = CHUNK_SIZE * CELL_SIZE + (CHUNK_SIZE + 1) * CELL_GAP;
+const CHUNK_PAD = (CHUNK_PIXELS - CHUNK_CONTENT_SIZE) / 2;
+const ORIGIN_CHUNK_X = 380;
+const ORIGIN_CHUNK_Y = 30;
 
-const ANIMAL_POSITIONS: Record<string, Point> = {};
-ANIMALS.forEach((a, i) => {
-  ANIMAL_POSITIONS[a.id] = { x: 1320 + i * 110, y: ROW_Y };
-});
+function chunkOrigin(cx: number, cy: number): Point {
+  return { x: ORIGIN_CHUNK_X + cx * CHUNK_PIXELS, y: ORIGIN_CHUNK_Y + cy * CHUNK_PIXELS };
+}
+
+function cellCenter(origin: Point, row: number, col: number): Point {
+  const left = origin.x + CHUNK_PAD + CELL_GAP + col * (CELL_SIZE + CELL_GAP);
+  const top = origin.y + CHUNK_PAD + CELL_GAP + row * (CELL_SIZE + CELL_GAP);
+  return { x: left + CELL_SIZE / 2, y: top + CELL_SIZE / 2 };
+}
+
+const ALL_CHUNK_ORIGINS = CHUNK_OFFSETS.map(([cx, cy]) => chunkOrigin(cx, cy));
+const WORLD_MIN_X = Math.min(60, ...ALL_CHUNK_ORIGINS.map((p) => p.x));
+const WORLD_MAX_X = Math.max(...ALL_CHUNK_ORIGINS.map((p) => p.x + CHUNK_PIXELS)) + 20;
+const WORLD_MIN_Y = Math.min(...ALL_CHUNK_ORIGINS.map((p) => p.y)) - 20;
+const WORLD_MAX_Y = Math.max(...ALL_CHUNK_ORIGINS.map((p) => p.y + CHUNK_PIXELS)) + 20;
 
 function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -148,9 +153,13 @@ function drawBarn(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fill();
 }
 
+interface CellRef {
+  chunkIndex: number;
+  cellIndex: number;
+}
+
 interface Interaction {
-  plotIndex: number | null;
-  animalId: string | null;
+  cell: CellRef | null;
   nearBarn: boolean;
   nearTable: boolean;
 }
@@ -161,14 +170,9 @@ export default function Farm({ kidId }: { kidId: string }) {
   const [progress, setProgress] = useState<FarmProgressState>(DEFAULT_PROGRESS);
   const [loaded, setLoaded] = useState(false);
   const [screen, setScreen] = useState<Screen>("world");
-  const [plantingPlot, setPlantingPlot] = useState<number | null>(null);
+  const [cellPicker, setCellPicker] = useState<CellRef | null>(null);
   const [now, setNow] = useState(() => currentTimeMs());
-  const [interaction, setInteraction] = useState<Interaction>({
-    plotIndex: null,
-    animalId: null,
-    nearBarn: false,
-    nearTable: false,
-  });
+  const [interaction, setInteraction] = useState<Interaction>({ cell: null, nearBarn: false, nearTable: false });
   const [toast, setToast] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -177,7 +181,7 @@ export default function Farm({ kidId }: { kidId: string }) {
   const playerRef = useRef<Point>({ x: 170, y: 280 });
   const facingRef = useRef<1 | -1>(1);
   const progressRef = useRef(progress);
-  const interactionRef = useRef<Interaction>({ plotIndex: null, animalId: null, nearBarn: false, nearTable: false });
+  const interactionRef = useRef<Interaction>({ cell: null, nearBarn: false, nearTable: false });
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -192,33 +196,30 @@ export default function Farm({ kidId }: { kidId: string }) {
     if (data.progress) {
       setProgress({
         coins: data.progress.coins,
-        landLevel: data.progress.landLevel,
         wateringLevel: data.progress.wateringLevel,
         fertilizerLevel: data.progress.fertilizerLevel,
-        barnLevel: data.progress.barnLevel,
         autoHarvest: data.progress.autoHarvest,
         autoPlant: data.progress.autoPlant,
-        plots: data.progress.plots as Plot[],
-        animalPens: data.progress.animalPens as AnimalPens,
+        chunks: data.progress.chunks as Chunk[],
         barn: data.progress.barn as Barn,
         basket: data.progress.basket as Basket,
-        currentOrder: (data.progress.currentOrder as CustomerOrder | null) ?? null,
+        currentOrders: (data.progress.currentOrders as CustomerOrder[] | undefined) ?? [],
       });
     }
   }
 
   // Order generation normally happens server-side (see /api/farm/progress),
   // but that means the demo (no backend) or any failed request would leave
-  // currentOrder stuck at null forever — fall back to generating one
-  // locally whenever a sync doesn't come back with one.
-  function ensureOrder() {
+  // currentOrders stuck short forever — fall back to filling it locally
+  // whenever a sync doesn't come back with a full set.
+  function ensureOrders() {
     setProgress((p) => {
-      if (p.currentOrder) return p;
+      if (p.currentOrders.length >= 3) return p;
       const availableItemIds = [
         ...CROPS.map((c) => c.id),
-        ...ANIMALS.filter((a) => getPen(p.animalPens, a.id).count > 0).map((a) => a.productId),
+        ...ANIMALS.filter((a) => countAnimalType(p.chunks, a.id) > 0).map((a) => a.productId),
       ];
-      return { ...p, currentOrder: generateOrder(availableItemIds, Math.random) };
+      return { ...p, currentOrders: fillOrders(p.currentOrders, availableItemIds, Math.random) };
     });
   }
 
@@ -229,7 +230,7 @@ export default function Farm({ kidId }: { kidId: string }) {
       .catch(() => {})
       .finally(() => {
         setLoaded(true);
-        ensureOrder();
+        ensureOrders();
       });
   }, [kidId]);
 
@@ -275,67 +276,82 @@ export default function Farm({ kidId }: { kidId: string }) {
     toastTimeoutRef.current = setTimeout(() => setToast(null), 1600);
   }
 
-  function plant(plotIndex: number, cropId: string) {
-    const crop = getCrop(cropId);
-    if (!crop || progressRef.current.coins < crop.seedCost) return;
-    setPlantingPlot(null);
+  function assignCell(chunkIndex: number, cellIndex: number, content: "crop" | "animal", itemId: string) {
+    const chunks = progressRef.current.chunks;
+    const chunk = chunks[chunkIndex];
+    const cell = chunk?.cells[cellIndex];
+    if (!cell || cell.content !== "empty") return;
+    let cost: number;
+    let label: string;
+    if (content === "crop") {
+      const crop = getCrop(itemId);
+      if (!crop) return;
+      cost = crop.seedCost;
+      label = `Planted ${crop.emoji} ${crop.name}`;
+    } else {
+      const animal = getAnimal(itemId);
+      if (!animal) return;
+      cost = animalCost(animal, countAnimalType(chunks, itemId));
+      label = `Placed a ${animal.emoji} ${animal.name}`;
+    }
+    if (progressRef.current.coins < cost) return;
+    setCellPicker(null);
     setProgress((p) => {
-      const plots = [...p.plots];
-      plots[plotIndex] = { crop: crop.id, plantedAt: new Date().toISOString() };
-      return { ...p, coins: p.coins - crop.seedCost, plots };
+      const nextChunks = p.chunks.map((c, ci) =>
+        ci !== chunkIndex ? c : { ...c, cells: c.cells.map((cc, i) => (i === cellIndex ? plantCell(content, itemId) : cc)) },
+      );
+      return { ...p, coins: p.coins - cost, chunks: nextChunks };
     });
-    syncInBackground("/api/farm/plant", { kidId, plotIndex, cropId });
-    showToast(`Planted ${crop.emoji} ${crop.name}`);
+    syncInBackground("/api/farm/assign-cell", { kidId, chunkIndex, cellIndex, content, itemId });
+    showToast(label);
   }
 
-  // Auto-harvest deposits straight into the barn; otherwise it goes into the
-  // basket, which has to be carried over to the barn and deposited.
-  function harvest(plotIndex: number) {
-    const plot = progressRef.current.plots[plotIndex];
-    const crop = plot?.crop ? getCrop(plot.crop) : null;
-    if (!crop || plotState(plot, progressRef.current.wateringLevel, currentTimeMs()) !== "ready") return;
+  function harvestCell(chunkIndex: number, cellIndex: number) {
+    const chunk = progressRef.current.chunks[chunkIndex];
+    const cell = chunk?.cells[cellIndex];
+    if (!cell || cellState(cell, progressRef.current.wateringLevel, currentTimeMs()) !== "ready") return;
+    const itemId = cellSellableItemId(cell);
+    const item = itemId ? getSellableItem(itemId) : undefined;
+    if (!itemId || !item) return;
     const autoHarvest = progressRef.current.autoHarvest;
+    const isCrop = cell.content === "crop";
+    const nextCell: Cell = isCrop ? harvestCropCell() : collectAnimalCell(cell);
     setProgress((p) => {
-      const plots = [...p.plots];
-      plots[plotIndex] = { crop: null, plantedAt: null };
+      const nextChunks = p.chunks.map((c, ci) =>
+        ci !== chunkIndex ? c : { ...c, cells: c.cells.map((cc, i) => (i === cellIndex ? nextCell : cc)) },
+      );
       if (autoHarvest) {
         const barn = { ...p.barn };
-        addToBarn(barn, crop.id, barnCapacityForLevel(p.barnLevel));
-        return { ...p, plots, barn };
+        addToBarn(barn, itemId, totalBarnCapacity(p.chunks));
+        return { ...p, chunks: nextChunks, barn };
       }
       const basket = { ...p.basket };
-      addToBasket(basket, crop.id, 1);
-      return { ...p, plots, basket };
+      addToBasket(basket, itemId, 1);
+      return { ...p, chunks: nextChunks, basket };
     });
-    syncInBackground("/api/farm/harvest", { kidId, plotIndex });
-    showToast(`Picked ${crop.emoji} ${crop.name}!`);
+    syncInBackground("/api/farm/harvest-cell", { kidId, chunkIndex, cellIndex });
+    showToast(`${isCrop ? "Picked" : "Collected"} ${item.emoji} ${item.name}!`);
   }
 
-  function collectAnimal(animalId: string) {
-    const animal = getAnimal(animalId);
-    const pen = getPen(progressRef.current.animalPens, animalId);
-    if (!animal || penState(pen, animal, currentTimeMs()) !== "ready") return;
-    const autoHarvest = progressRef.current.autoHarvest;
+  function buildBarnAction(chunkIndex: number) {
+    const chunk = progressRef.current.chunks[chunkIndex];
+    if (!chunk || !canBuildBarn(chunk)) return;
+    if (progressRef.current.coins < BARN_BUILD_COST) return;
+    setCellPicker(null);
     setProgress((p) => {
-      const prevPen = getPen(p.animalPens, animalId);
-      const nextPens = { ...p.animalPens, [animalId]: { ...prevPen, lastCollectedAt: new Date().toISOString() } };
-      if (autoHarvest) {
-        const barn = { ...p.barn };
-        addManyToBarn(barn, animal.productId, prevPen.count, barnCapacityForLevel(p.barnLevel));
-        return { ...p, animalPens: nextPens, barn };
-      }
-      const basket = { ...p.basket };
-      addToBasket(basket, animal.productId, prevPen.count);
-      return { ...p, animalPens: nextPens, basket };
+      const nextChunks = p.chunks.map((c, ci) => (ci === chunkIndex ? buildBarn(c) : c));
+      return { ...p, coins: p.coins - BARN_BUILD_COST, chunks: nextChunks };
     });
-    syncInBackground("/api/farm/collect-animal", { kidId, animalId });
-    showToast(`Collected ${animal.productEmoji} x${pen.count}!`);
+    syncInBackground("/api/farm/build-barn", { kidId, chunkIndex });
+    showToast("Barn built! More storage room.");
   }
 
   function depositBasketAction() {
-    if (basketTotal(progressRef.current.basket) === 0) return;
+    const basketNow = progressRef.current.basket;
+    const total = Object.values(basketNow).reduce((s, n) => s + n, 0);
+    if (total === 0) return;
     setProgress((p) => {
-      const capacity = barnCapacityForLevel(p.barnLevel);
+      const capacity = totalBarnCapacity(p.chunks);
       const { basket, barn } = depositBasket(p.basket, p.barn, capacity);
       return { ...p, basket, barn };
     });
@@ -343,40 +359,43 @@ export default function Farm({ kidId }: { kidId: string }) {
     showToast("Deposited into the barn!");
   }
 
-  function fulfillOrder() {
-    const order = progressRef.current.currentOrder;
-    if (!order || !canFulfillOrder(progressRef.current.barn, order)) return;
+  // Fulfills whichever waiting customer's order the barn can actually
+  // cover; kids don't have to pick which one by hand.
+  function fulfillBestOrder() {
+    const orders = progressRef.current.currentOrders;
+    const barn = progressRef.current.barn;
+    const orderIndex = orders.findIndex((o) => canFulfillOrder(barn, o));
+    if (orderIndex === -1) return;
+    const order = orders[orderIndex];
     setProgress((p) => {
-      const barn = { ...p.barn };
-      barn[order.itemId] = (barn[order.itemId] ?? 0) - order.quantity;
-      if (barn[order.itemId] <= 0) delete barn[order.itemId];
-      return { ...p, coins: p.coins + order.reward, barn, currentOrder: null };
+      const nextBarn = { ...p.barn };
+      nextBarn[order.itemId] = (nextBarn[order.itemId] ?? 0) - order.quantity;
+      if (nextBarn[order.itemId] <= 0) delete nextBarn[order.itemId];
+      const nextOrders = p.currentOrders.filter((_, i) => i !== orderIndex);
+      return { ...p, coins: p.coins + order.reward, barn: nextBarn, currentOrders: nextOrders };
     });
     fetch("/api/farm/fulfill-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kidId }),
+      body: JSON.stringify({ kidId, orderIndex }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) applyProgress(data);
-        ensureOrder(); // no-op if the server already provided the next one
+        ensureOrders();
       })
-      .catch(() => ensureOrder());
+      .catch(() => ensureOrders());
     showToast(`Sold for 🪙${order.reward}!`);
   }
 
-  function buyLand() {
-    if (progressRef.current.landLevel >= MAX_LAND) return;
-    const cost = landCost(progressRef.current.landLevel);
+  function buyChunk() {
+    const chunks = progressRef.current.chunks;
+    if (chunks.length >= MAX_CHUNKS) return;
+    const cost = chunkCost(chunks.length);
     if (progressRef.current.coins < cost) return;
-    setProgress((p) => ({
-      ...p,
-      coins: p.coins - cost,
-      landLevel: p.landLevel + 1,
-      plots: [...p.plots, { crop: null, plantedAt: null }],
-    }));
-    syncInBackground("/api/farm/buy-land", { kidId });
+    const [cx, cy] = CHUNK_OFFSETS[chunks.length];
+    setProgress((p) => ({ ...p, coins: p.coins - cost, chunks: [...p.chunks, emptyChunk(cx, cy)] }));
+    syncInBackground("/api/farm/buy-chunk", { kidId });
   }
 
   function buyUpgrade(stat: "watering" | "fertilizer") {
@@ -389,14 +408,6 @@ export default function Farm({ kidId }: { kidId: string }) {
     syncInBackground("/api/farm/upgrade", { kidId, stat });
   }
 
-  function buyBarnUpgrade() {
-    if (progressRef.current.barnLevel >= MAX_BARN_LEVEL) return;
-    const cost = barnUpgradeCost(progressRef.current.barnLevel);
-    if (progressRef.current.coins < cost) return;
-    setProgress((p) => ({ ...p, coins: p.coins - cost, barnLevel: p.barnLevel + 1 }));
-    syncInBackground("/api/farm/upgrade-barn", { kidId });
-  }
-
   function buyAutomation(type: "harvest" | "plant") {
     const field = type === "harvest" ? "autoHarvest" : "autoPlant";
     const cost = type === "harvest" ? AUTO_HARVEST_COST : AUTO_PLANT_COST;
@@ -407,62 +418,24 @@ export default function Farm({ kidId }: { kidId: string }) {
     syncInBackground("/api/farm/buy-automation", { kidId, type });
   }
 
-  function expandPen(animal: Animal) {
-    const pen = getPen(progressRef.current.animalPens, animal.id);
-    if (pen.capacity >= MAX_PEN_CAPACITY) return;
-    const cost = penExpandCost(animal, pen.capacity);
-    if (progressRef.current.coins < cost) return;
-    setProgress((p) => {
-      const prevPen = getPen(p.animalPens, animal.id);
-      return { ...p, coins: p.coins - cost, animalPens: { ...p.animalPens, [animal.id]: { ...prevPen, capacity: prevPen.capacity + 1 } } };
-    });
-    syncInBackground("/api/farm/expand-pen", { kidId, animalId: animal.id });
-  }
-
-  function buyAnimal(animal: Animal) {
-    const pen = getPen(progressRef.current.animalPens, animal.id);
-    if (pen.count >= pen.capacity) return;
-    const cost = animalCost(animal, pen.count);
-    if (progressRef.current.coins < cost) return;
-    setProgress((p) => {
-      const prevPen = getPen(p.animalPens, animal.id);
-      const nextPen = { ...prevPen, count: prevPen.count + 1, lastCollectedAt: prevPen.lastCollectedAt ?? new Date().toISOString() };
-      return { ...p, coins: p.coins - cost, animalPens: { ...p.animalPens, [animal.id]: nextPen } };
-    });
-    syncInBackground("/api/farm/buy-animal", { kidId, animalId: animal.id });
-    showToast(`Bought a ${animal.emoji} ${animal.name}!`);
-  }
-
   function handleAction() {
-    if (plantingPlot !== null) return;
+    if (cellPicker !== null) return;
     const near = interactionRef.current;
-    if (near.plotIndex !== null) {
-      const plot = progressRef.current.plots[near.plotIndex];
-      const state = plotState(plot, progressRef.current.wateringLevel, currentTimeMs());
-      if (state === "empty") setPlantingPlot(near.plotIndex);
-      else if (state === "ready") harvest(near.plotIndex);
-      return;
-    }
-    if (near.animalId !== null) {
-      const animal = getAnimal(near.animalId);
-      if (!animal) return;
-      const pen = getPen(progressRef.current.animalPens, near.animalId);
-      const state = penState(pen, animal, currentTimeMs());
-      if (state === "ready") {
-        collectAnimal(near.animalId);
-        return;
-      }
-      if (pen.count < pen.capacity) {
-        buyAnimal(animal);
-        return;
-      }
+    if (near.cell) {
+      const { chunkIndex, cellIndex } = near.cell;
+      const chunk = progressRef.current.chunks[chunkIndex];
+      const cell = chunk?.cells[cellIndex];
+      if (!cell) return;
+      const state = cellState(cell, progressRef.current.wateringLevel, currentTimeMs());
+      if (state === "empty") setCellPicker({ chunkIndex, cellIndex });
+      else if (state === "ready") harvestCell(chunkIndex, cellIndex);
       return;
     }
     if (near.nearBarn) {
       setScreen("barn");
       return;
     }
-    if (near.nearTable) fulfillOrder();
+    if (near.nearTable) fulfillBestOrder();
   }
 
   function pressKey(key: string) {
@@ -488,7 +461,7 @@ export default function Farm({ kidId }: { kidId: string }) {
       window.removeEventListener("keyup", onKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plantingPlot]);
+  }, [cellPicker]);
 
   useEffect(() => {
     if (screen !== "world" || !loaded) return;
@@ -504,7 +477,7 @@ export default function Farm({ kidId }: { kidId: string }) {
       lastTime = frameNow;
       const player = playerRef.current;
 
-      if (plantingPlot === null) {
+      if (cellPicker === null) {
         let dx = 0;
         let dy = 0;
         if (keysRef.current.has("ArrowLeft")) dx -= 1;
@@ -519,57 +492,62 @@ export default function Farm({ kidId }: { kidId: string }) {
         else if (dx > 0) facingRef.current = 1;
 
         const margin = PLAYER_SIZE / 2;
-        player.x = Math.max(margin, Math.min(WORLD_W - margin, player.x + dx * PLAYER_SPEED * dt));
-        player.y = Math.max(margin + 90, Math.min(CANVAS_H - margin, player.y + dy * PLAYER_SPEED * dt));
+        player.x = Math.max(WORLD_MIN_X + margin, Math.min(WORLD_MAX_X - margin, player.x + dx * PLAYER_SPEED * dt));
+        player.y = Math.max(WORLD_MIN_Y + margin, Math.min(WORLD_MAX_Y - margin, player.y + dy * PLAYER_SPEED * dt));
       }
 
-      const land = progressRef.current.landLevel;
-      let nearPlot: number | null = null;
-      for (let i = 0; i < land; i++) {
-        if (dist(player, CROP_POSITIONS[i]) < INTERACT_RADIUS) {
-          nearPlot = i;
-          break;
-        }
-      }
-      let nearAnimalId: string | null = null;
-      for (const animal of ANIMALS) {
-        const pen = getPen(progressRef.current.animalPens, animal.id);
-        if (pen.capacity === 0) continue;
-        if (dist(player, ANIMAL_POSITIONS[animal.id]) < INTERACT_RADIUS) {
-          nearAnimalId = animal.id;
-          break;
+      const chunks = progressRef.current.chunks;
+      let nearCell: CellRef | null = null;
+      outer: for (let ci = 0; ci < chunks.length; ci++) {
+        const chunk = chunks[ci];
+        const origin = chunkOrigin(chunk.cx, chunk.cy);
+        for (let row = 0; row < CHUNK_SIZE; row++) {
+          for (let col = 0; col < CHUNK_SIZE; col++) {
+            const idx = row * CHUNK_SIZE + col;
+            if (chunk.cells[idx].content === "barn") continue;
+            const center = cellCenter(origin, row, col);
+            if (dist(player, center) < INTERACT_RADIUS) {
+              nearCell = { chunkIndex: ci, cellIndex: idx };
+              break outer;
+            }
+          }
         }
       }
       const nearBarn = dist(player, BARN_POS) < BUILDING_RADIUS;
       const nearTable = dist(player, TABLE_POS) < BUILDING_RADIUS;
       const prev = interactionRef.current;
-      if (nearPlot !== prev.plotIndex || nearAnimalId !== prev.animalId || nearBarn !== prev.nearBarn || nearTable !== prev.nearTable) {
-        interactionRef.current = { plotIndex: nearPlot, animalId: nearAnimalId, nearBarn, nearTable };
-        setInteraction({ plotIndex: nearPlot, animalId: nearAnimalId, nearBarn, nearTable });
+      const cellChanged =
+        (nearCell?.chunkIndex ?? -1) !== (prev.cell?.chunkIndex ?? -1) || (nearCell?.cellIndex ?? -1) !== (prev.cell?.cellIndex ?? -1);
+      if (cellChanged || nearBarn !== prev.nearBarn || nearTable !== prev.nearTable) {
+        interactionRef.current = { cell: nearCell, nearBarn, nearTable };
+        setInteraction({ cell: nearCell, nearBarn, nearTable });
       }
 
       const sprites = spritesRef.current;
       const clockNow = currentTimeMs();
-      const cameraX = Math.max(0, Math.min(player.x - CANVAS_W / 2, WORLD_W - CANVAS_W));
+      const cameraX = Math.max(WORLD_MIN_X, Math.min(player.x - CANVAS_W / 2, WORLD_MAX_X - CANVAS_W));
+      const cameraY = Math.max(WORLD_MIN_Y, Math.min(player.y - CANVAS_H / 2, WORLD_MAX_Y - CANVAS_H));
 
       ctx.fillStyle = "#86c46b";
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
       ctx.fillStyle = "#7bb864";
-      for (let gx = 0; gx < WORLD_W; gx += 40) {
-        for (let gy = 0; gy < CANVAS_H; gy += 40) {
+      for (let gx = Math.floor(WORLD_MIN_X / 40) * 40; gx < WORLD_MAX_X; gx += 40) {
+        for (let gy = Math.floor(WORLD_MIN_Y / 40) * 40; gy < WORLD_MAX_Y; gy += 40) {
           const sx = gx - cameraX;
-          if (sx < -40 || sx > CANVAS_W) continue;
-          if (((gx / 40 + gy / 40) | 0) % 2 === 0) ctx.fillRect(sx, gy, 40, 40);
+          const sy = gy - cameraY;
+          if (sx < -40 || sx > CANVAS_W || sy < -40 || sy > CANVAS_H) continue;
+          if (((Math.round(gx / 40) + Math.round(gy / 40)) | 0) % 2 === 0) ctx.fillRect(sx, sy, 40, 40);
         }
       }
 
-      drawBarn(ctx, BARN_POS.x - cameraX, BARN_POS.y);
+      drawBarn(ctx, BARN_POS.x - cameraX, BARN_POS.y - cameraY);
       if (nearBarn) {
-        ctx.strokeStyle = basketTotal(progressRef.current.basket) > 0 ? "#facc15" : "rgba(250,204,21,0.4)";
+        const basketHas = Object.values(progressRef.current.basket).some((n) => n > 0);
+        ctx.strokeStyle = basketHas ? "#facc15" : "rgba(250,204,21,0.4)";
         ctx.lineWidth = 3;
         ctx.setLineDash([6, 6]);
         ctx.beginPath();
-        ctx.arc(BARN_POS.x - cameraX, BARN_POS.y, BUILDING_RADIUS, 0, Math.PI * 2);
+        ctx.arc(BARN_POS.x - cameraX, BARN_POS.y - cameraY, BUILDING_RADIUS, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -577,134 +555,136 @@ export default function Farm({ kidId }: { kidId: string }) {
       if (sprites.table?.complete) {
         const tw = 84;
         const th = 42;
-        ctx.drawImage(sprites.table, TABLE_POS.x - cameraX - tw / 2, TABLE_POS.y - th / 2, tw, th);
+        ctx.drawImage(sprites.table, TABLE_POS.x - cameraX - tw / 2, TABLE_POS.y - cameraY - th / 2, tw, th);
       }
-      const order = progressRef.current.currentOrder;
-      if (order) {
+      const orders = progressRef.current.currentOrders;
+      const barnNow = progressRef.current.barn;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      orders.forEach((order, i) => {
         const item = getSellableItem(order.itemId);
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = "22px sans-serif";
-        ctx.fillText("🧑", TABLE_POS.x - cameraX, TABLE_POS.y - 40);
-        if (item) {
-          ctx.font = "bold 13px sans-serif";
-          ctx.fillStyle = "#1e293b";
-          ctx.fillText(`${item.emoji} x${order.quantity}`, TABLE_POS.x - cameraX, TABLE_POS.y - 60);
-        }
-      }
+        if (!item) return;
+        const ox = TABLE_POS.x - cameraX + (i - 1) * 34;
+        const oy = TABLE_POS.y - cameraY - 46;
+        ctx.font = "18px sans-serif";
+        ctx.fillText("🧑", ox, oy);
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillStyle = canFulfillOrder(barnNow, order) ? "#166534" : "#1e293b";
+        ctx.fillText(`${item.emoji}x${order.quantity}`, ox, oy - 18);
+      });
       if (nearTable) {
-        ctx.strokeStyle = order && canFulfillOrder(progressRef.current.barn, order) ? "#facc15" : "rgba(250,204,21,0.4)";
+        const anyFulfillable = orders.some((o) => canFulfillOrder(barnNow, o));
+        ctx.strokeStyle = anyFulfillable ? "#facc15" : "rgba(250,204,21,0.4)";
         ctx.lineWidth = 3;
         ctx.setLineDash([6, 6]);
         ctx.beginPath();
-        ctx.arc(TABLE_POS.x - cameraX, TABLE_POS.y + 10, BUILDING_RADIUS, 0, Math.PI * 2);
+        ctx.arc(TABLE_POS.x - cameraX, TABLE_POS.y - cameraY + 10, BUILDING_RADIUS, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
       }
 
-      for (let i = 0; i < land; i++) {
-        const pos = CROP_POSITIONS[i];
-        const sx = pos.x - cameraX;
-        if (sx < -60 || sx > CANVAS_W + 60) continue;
-        const plot = progressRef.current.plots[i];
-        const state = plotState(plot, progressRef.current.wateringLevel, clockNow);
-        const size = 56;
-
-        if (sprites.soil?.complete) {
-          ctx.drawImage(sprites.soil, sx - size / 2, pos.y - size / 2, size, size);
-        }
-
-        if (i === nearPlot) {
-          ctx.strokeStyle = "#38bdf8";
-          ctx.lineWidth = 3;
-          ctx.setLineDash([6, 6]);
-          ctx.beginPath();
-          ctx.arc(sx, pos.y, INTERACT_RADIUS, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        const crop = plot.crop ? getCrop(plot.crop) : null;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        if (crop && state === "growing") {
-          const frac = growProgress(plot, progressRef.current.wateringLevel, clockNow);
-          ctx.font = `${14 + frac * 16}px sans-serif`;
-          ctx.globalAlpha = 0.85;
-          ctx.fillText(crop.emoji, sx, pos.y);
-          ctx.globalAlpha = 1;
-
-          ctx.fillStyle = "rgba(255,255,255,0.7)";
-          ctx.fillRect(sx - 22, pos.y + size / 2 - 6, 44, 6);
-          ctx.fillStyle = "#22c55e";
-          ctx.fillRect(sx - 22, pos.y + size / 2 - 6, 44 * frac, 6);
-        } else if (crop && state === "ready") {
-          const bounce = Math.sin(frameNow / 180) * 3;
-          ctx.font = "30px sans-serif";
-          ctx.fillText(crop.emoji, sx, pos.y + bounce);
-        } else {
-          ctx.font = "16px sans-serif";
-          ctx.fillStyle = "rgba(255,255,255,0.8)";
-          ctx.fillText("+", sx, pos.y);
-        }
+      // Locked chunk placeholders (fixed positions, drawn before owned ones).
+      for (let i = chunks.length; i < CHUNK_OFFSETS.length; i++) {
+        const [cx, cy] = CHUNK_OFFSETS[i];
+        const origin = chunkOrigin(cx, cy);
+        const sx = origin.x - cameraX;
+        const sy = origin.y - cameraY;
+        if (sx < -CHUNK_PIXELS || sx > CANVAS_W || sy < -CHUNK_PIXELS || sy > CANVAS_H) continue;
+        ctx.strokeStyle = "rgba(100,100,100,0.35)";
+        ctx.setLineDash([6, 6]);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + CHUNK_PAD, sy + CHUNK_PAD, CHUNK_CONTENT_SIZE, CHUNK_CONTENT_SIZE);
+        ctx.setLineDash([]);
+        ctx.font = "20px sans-serif";
+        ctx.fillText("🔒", sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 - 8);
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillStyle = "#334155";
+        ctx.fillText(`🪙${chunkCost(i)}`, sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 + 10);
       }
 
-      for (const animal of ANIMALS) {
-        const pen = getPen(progressRef.current.animalPens, animal.id);
-        const pos = ANIMAL_POSITIONS[animal.id];
-        const sx = pos.x - cameraX;
-        if (sx < -60 || sx > CANVAS_W + 60) continue;
-        if (pen.capacity === 0) {
-          ctx.strokeStyle = "rgba(100,100,100,0.4)";
-          ctx.setLineDash([4, 4]);
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(sx, pos.y, 28, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.font = "18px sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("🔒", sx, pos.y);
-          continue;
-        }
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const chunk = chunks[ci];
+        const origin = chunkOrigin(chunk.cx, chunk.cy);
+        const csx = origin.x - cameraX;
+        const csy = origin.y - cameraY;
+        if (csx < -CHUNK_PIXELS || csx > CANVAS_W || csy < -CHUNK_PIXELS || csy > CANVAS_H) continue;
 
-        ctx.fillStyle = "#dbeafe";
-        ctx.beginPath();
-        ctx.roundRect(sx - 32, pos.y - 26, 64, 52, 8);
-        ctx.fill();
+        for (let row = 0; row < CHUNK_SIZE; row++) {
+          for (let col = 0; col < CHUNK_SIZE; col++) {
+            const idx = row * CHUNK_SIZE + col;
+            const cell = chunk.cells[idx];
+            const center = cellCenter(origin, row, col);
+            const sx = center.x - cameraX;
+            const sy = center.y - cameraY;
 
-        if (animal.id === nearAnimalId) {
-          ctx.strokeStyle = "#38bdf8";
-          ctx.lineWidth = 3;
-          ctx.setLineDash([6, 6]);
-          ctx.beginPath();
-          ctx.arc(sx, pos.y, INTERACT_RADIUS, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
+            if (cell.content === "barn") {
+              ctx.fillStyle = "#92400e";
+              ctx.fillRect(sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+              ctx.font = "22px sans-serif";
+              ctx.fillText("🏚️", sx, sy);
+              continue;
+            }
 
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const state = penState(pen, animal, clockNow);
-        if (pen.count === 0) {
-          ctx.font = "24px sans-serif";
-          ctx.globalAlpha = 0.5;
-          ctx.fillText(animal.emoji, sx, pos.y - 4);
-          ctx.globalAlpha = 1;
-        } else {
-          const bounce = state === "ready" ? Math.sin(frameNow / 180) * 2 : 0;
-          ctx.font = "24px sans-serif";
-          ctx.fillText(animal.emoji, sx, pos.y - 6 + bounce);
-          ctx.font = "bold 11px sans-serif";
-          ctx.fillStyle = "#1e293b";
-          ctx.fillText(`x${pen.count}`, sx, pos.y + 18);
-          if (state === "producing") {
-            const frac = penProgress(pen, animal, clockNow);
-            ctx.fillStyle = "rgba(255,255,255,0.8)";
-            ctx.fillRect(sx - 22, pos.y + 24, 44, 5);
-            ctx.fillStyle = "#22c55e";
-            ctx.fillRect(sx - 22, pos.y + 24, 44 * frac, 5);
+            if (sprites.soil?.complete) {
+              ctx.drawImage(sprites.soil, sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+            }
+
+            const isNear = interactionRef.current.cell?.chunkIndex === ci && interactionRef.current.cell?.cellIndex === idx;
+            if (isNear) {
+              ctx.strokeStyle = "#38bdf8";
+              ctx.lineWidth = 3;
+              ctx.setLineDash([5, 5]);
+              ctx.beginPath();
+              ctx.arc(sx, sy, INTERACT_RADIUS, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+
+            const state = cellState(cell, progressRef.current.wateringLevel, clockNow);
+            if (cell.content === "empty") {
+              ctx.font = "14px sans-serif";
+              ctx.fillStyle = "rgba(255,255,255,0.8)";
+              ctx.fillText("+", sx, sy);
+            } else if (cell.content === "crop" && cell.itemId) {
+              const crop = getCrop(cell.itemId);
+              if (crop) {
+                if (state === "growing") {
+                  const total = crop.growTimeMs;
+                  const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
+                  const frac = Math.max(0, Math.min(1, elapsed / total));
+                  ctx.font = `${12 + frac * 12}px sans-serif`;
+                  ctx.globalAlpha = 0.85;
+                  ctx.fillText(crop.emoji, sx, sy);
+                  ctx.globalAlpha = 1;
+                  ctx.fillStyle = "rgba(255,255,255,0.7)";
+                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
+                  ctx.fillStyle = "#22c55e";
+                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
+                } else {
+                  const bounce = Math.sin(frameNow / 180) * 2;
+                  ctx.font = "24px sans-serif";
+                  ctx.fillText(crop.emoji, sx, sy + bounce);
+                }
+              }
+            } else if (cell.content === "animal" && cell.itemId) {
+              const animal = getAnimal(cell.itemId);
+              if (animal) {
+                if (state === "growing") {
+                  const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
+                  const frac = Math.max(0, Math.min(1, elapsed / animal.cycleTimeMs));
+                  ctx.font = "20px sans-serif";
+                  ctx.fillText(animal.emoji, sx, sy);
+                  ctx.fillStyle = "rgba(255,255,255,0.7)";
+                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
+                  ctx.fillStyle = "#22c55e";
+                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
+                } else {
+                  const bounce = Math.sin(frameNow / 180) * 2;
+                  ctx.font = "24px sans-serif";
+                  ctx.fillText(animal.emoji, sx, sy + bounce);
+                }
+              }
+            }
           }
         }
       }
@@ -714,11 +694,11 @@ export default function Farm({ kidId }: { kidId: string }) {
         const ph = PLAYER_SIZE;
         ctx.save();
         if (facingRef.current === -1) {
-          ctx.translate(player.x - cameraX + pw / 2, player.y - ph / 2);
+          ctx.translate(player.x - cameraX + pw / 2, player.y - cameraY - ph / 2);
           ctx.scale(-1, 1);
           ctx.drawImage(sprites.player, 0, 0, pw, ph);
         } else {
-          ctx.drawImage(sprites.player, player.x - cameraX - pw / 2, player.y - ph / 2, pw, ph);
+          ctx.drawImage(sprites.player, player.x - cameraX - pw / 2, player.y - cameraY - ph / 2, pw, ph);
         }
         ctx.restore();
       }
@@ -728,14 +708,15 @@ export default function Farm({ kidId }: { kidId: string }) {
 
     rafId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafId);
-  }, [screen, plantingPlot, loaded]);
+  }, [screen, cellPicker, loaded]);
 
   if (!loaded) {
     return <p className="text-sm text-slate-400">Loading farm…</p>;
   }
 
-  const barnCapacity = barnCapacityForLevel(progress.barnLevel);
-  const barnUsed = barnTotal(progress.barn);
+  const barnCapacity = totalBarnCapacity(progress.chunks);
+  const barnUsed = Object.values(progress.barn).reduce((s, n) => s + n, 0);
+  const basketUsed = Object.values(progress.basket).reduce((s, n) => s + n, 0);
 
   if (screen === "shop") {
     return (
@@ -746,15 +727,15 @@ export default function Farm({ kidId }: { kidId: string }) {
           {/* eslint-disable-next-line @next/next/no-img-element -- shared component also runs under Vite (the demo), which next/image can't target */}
           <img src={FARM_SPRITES.hoe} alt="" className="h-8 w-8" style={{ imageRendering: "pixelated" }} />
           <div>
-            <p className="font-semibold text-slate-700">Land — {progress.landLevel} / {MAX_LAND} plots</p>
-            <p className="text-xs text-slate-400">Buy more land to grow more crops at once.</p>
+            <p className="font-semibold text-slate-700">Land — {progress.chunks.length} / {MAX_CHUNKS} plots of land</p>
+            <p className="text-xs text-slate-400">Each plot is a 3x3 area — choose crops, animals, or a barn for each square.</p>
           </div>
           <button
-            onClick={buyLand}
-            disabled={progress.landLevel >= MAX_LAND || progress.coins < landCost(progress.landLevel)}
+            onClick={buyChunk}
+            disabled={progress.chunks.length >= MAX_CHUNKS || progress.coins < chunkCost(progress.chunks.length)}
             className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
           >
-            {progress.landLevel >= MAX_LAND ? "Max" : `Buy — 🪙${landCost(progress.landLevel)}`}
+            {progress.chunks.length >= MAX_CHUNKS ? "Max" : `Buy — 🪙${chunkCost(progress.chunks.length)}`}
           </button>
         </div>
 
@@ -790,25 +771,10 @@ export default function Farm({ kidId }: { kidId: string }) {
         </div>
 
         <div className="flex items-center gap-3 rounded-xl bg-white p-3 shadow">
-          <span className="flex h-8 w-8 items-center justify-center text-2xl">🏚️</span>
-          <div>
-            <p className="font-semibold text-slate-700">Barn Size — Level {progress.barnLevel} / {MAX_BARN_LEVEL}</p>
-            <p className="text-xs text-slate-400">Holds {barnCapacity} items — same footprint, more room inside.</p>
-          </div>
-          <button
-            onClick={buyBarnUpgrade}
-            disabled={progress.barnLevel >= MAX_BARN_LEVEL || progress.coins < barnUpgradeCost(progress.barnLevel)}
-            className="ml-auto rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-40"
-          >
-            {progress.barnLevel >= MAX_BARN_LEVEL ? "Max" : `Upgrade — 🪙${barnUpgradeCost(progress.barnLevel)}`}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-3 rounded-xl bg-white p-3 shadow">
           <span className="flex h-8 w-8 items-center justify-center text-2xl">🤖</span>
           <div>
             <p className="font-semibold text-slate-700">Auto-Harvester {progress.autoHarvest && "— Owned"}</p>
-            <p className="text-xs text-slate-400">Harvests ready crops &amp; animals straight into the barn, even while you&rsquo;re away.</p>
+            <p className="text-xs text-slate-400">Harvests ready crops &amp; animals straight into a barn, even while you&rsquo;re away.</p>
           </div>
           <button
             onClick={() => buyAutomation("harvest")}
@@ -834,27 +800,11 @@ export default function Farm({ kidId }: { kidId: string }) {
           </button>
         </div>
 
-        {ANIMALS.map((animal) => {
-          const pen = getPen(progress.animalPens, animal.id);
-          return (
-            <div key={animal.id} className="flex items-center gap-3 rounded-xl bg-white p-3 shadow">
-              <span className="flex h-8 w-8 items-center justify-center text-2xl">{animal.emoji}</span>
-              <div>
-                <p className="font-semibold text-slate-700">
-                  {animal.name} Pen — {pen.capacity} / {MAX_PEN_CAPACITY} spaces
-                </p>
-                <p className="text-xs text-slate-400">Expand to make room for more {animal.name.toLowerCase()}s.</p>
-              </div>
-              <button
-                onClick={() => expandPen(animal)}
-                disabled={pen.capacity >= MAX_PEN_CAPACITY || progress.coins < penExpandCost(animal, pen.capacity)}
-                className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
-              >
-                {pen.capacity >= MAX_PEN_CAPACITY ? "Max" : `Expand — 🪙${penExpandCost(animal, pen.capacity)}`}
-              </button>
-            </div>
-          );
-        })}
+        <p className="max-w-sm text-center text-xs text-slate-400">
+          Barns aren&rsquo;t bought here — walk to an empty square on land you
+          own and choose &ldquo;Build Barn&rdquo;. It uses up 4 of that
+          plot&rsquo;s 9 squares but adds more storage room.
+        </p>
 
         <button onClick={() => setScreen("world")} className="text-sm text-slate-500 underline">
           Back to farm
@@ -921,51 +871,43 @@ export default function Farm({ kidId }: { kidId: string }) {
     );
   }
 
-  const nearPlot = interaction.plotIndex !== null ? progress.plots[interaction.plotIndex] : null;
-  const nearPlotState = nearPlot ? plotState(nearPlot, progress.wateringLevel, now) : null;
-  const nearAnimal = interaction.animalId !== null ? getAnimal(interaction.animalId) : null;
-  const nearPen = nearAnimal ? getPen(progress.animalPens, nearAnimal.id) : null;
-  const nearPenState = nearAnimal && nearPen ? penState(nearPen, nearAnimal, now) : null;
-  const basketFull = basketTotal(progress.basket) > 0;
-  const order = progress.currentOrder;
-  const canFulfill = order ? canFulfillOrder(progress.barn, order) : false;
+  const nearCellRef = interaction.cell;
+  const nearChunk = nearCellRef ? progress.chunks[nearCellRef.chunkIndex] : null;
+  const nearCell = nearChunk && nearCellRef ? nearChunk.cells[nearCellRef.cellIndex] : null;
+  const nearCellState = nearCell ? cellState(nearCell, progress.wateringLevel, now) : null;
+  const anyFulfillable = progress.currentOrders.some((o) => canFulfillOrder(progress.barn, o));
 
-  const actionLabel =
-    interaction.plotIndex !== null
-      ? nearPlotState === "empty"
-        ? "🌱 Plant"
-        : nearPlotState === "ready"
-          ? "✋ Collect"
-          : "⏳ Growing…"
-      : nearAnimal && nearPen
-        ? nearPenState === "ready"
-          ? `✋ Collect ${nearAnimal.productEmoji}`
-          : nearPen.count < nearPen.capacity
-            ? `🪙 Buy ${nearAnimal.emoji} (${animalCost(nearAnimal, nearPen.count)})`
-            : "⏳ Growing…"
-        : interaction.nearBarn
-          ? basketFull
-            ? "🏚️ Open Barn"
-            : "🏚️ Look Inside"
-          : interaction.nearTable
-            ? order
-              ? canFulfill
-                ? `💰 Sell ${order.quantity}x`
-                : "❌ Not enough stock"
-              : "No customer yet"
-            : "Walk around";
+  const actionLabel = nearCellRef
+    ? nearCellState === "empty"
+      ? "🌱 Plant / Build"
+      : nearCellState === "ready"
+        ? "✋ Collect"
+        : "⏳ Growing…"
+    : interaction.nearBarn
+      ? basketUsed > 0
+        ? "🏚️ Open Barn"
+        : "🏚️ Look Inside"
+      : interaction.nearTable
+        ? progress.currentOrders.length === 0
+          ? "No customers yet"
+          : anyFulfillable
+            ? "💰 Sell to a customer"
+            : "❌ Not enough stock"
+        : "Walk around";
 
   const canAct =
-    (interaction.plotIndex !== null && (nearPlotState === "empty" || nearPlotState === "ready")) ||
-    (nearAnimal !== null && nearPen !== null && (nearPenState === "ready" || nearPen.count < nearPen.capacity)) ||
+    (nearCellRef !== null && (nearCellState === "empty" || nearCellState === "ready")) ||
     interaction.nearBarn ||
-    (interaction.nearTable && canFulfill);
+    (interaction.nearTable && anyFulfillable);
+
+  const pickerChunk = cellPicker ? progress.chunks[cellPicker.chunkIndex] : null;
+  const pickerBarnAvailable = pickerChunk ? canBuildBarn(pickerChunk) : false;
 
   return (
     <div className="flex flex-col items-center gap-3">
       <div className="flex flex-wrap items-center justify-center gap-3">
         <span className="text-lg font-bold text-slate-800">🪙 {progress.coins} coins</span>
-        <span className="text-sm font-semibold text-slate-500">🧺 {basketTotal(progress.basket)}</span>
+        <span className="text-sm font-semibold text-slate-500">🧺 {basketUsed}</span>
         <span className="text-sm font-semibold text-slate-500">🏚️ {barnUsed}/{barnCapacity}</span>
         <button
           onClick={() => setScreen("shop")}
@@ -987,16 +929,16 @@ export default function Farm({ kidId }: { kidId: string }) {
             {toast}
           </div>
         )}
-        {plantingPlot !== null && (
+        {cellPicker && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 p-4">
-            <div className="flex w-56 flex-col gap-1 rounded-xl bg-white p-3 shadow-lg">
-              <p className="mb-1 text-center text-sm font-semibold text-slate-700">Choose a seed</p>
+            <div className="flex max-h-full w-60 flex-col gap-1 overflow-y-auto rounded-xl bg-white p-3 shadow-lg">
+              <p className="mb-1 text-center text-sm font-semibold text-slate-700">What goes here?</p>
               {CROPS.map((c) => {
                 const sellsFor = effectiveSellPrice(c, progress.fertilizerLevel);
                 return (
                   <button
                     key={c.id}
-                    onClick={() => plant(plantingPlot, c.id)}
+                    onClick={() => assignCell(cellPicker.chunkIndex, cellPicker.cellIndex, "crop", c.id)}
                     disabled={progress.coins < c.seedCost}
                     className="flex flex-col rounded-lg px-2 py-1 text-left text-sm hover:bg-sky-50 disabled:opacity-40"
                   >
@@ -1004,14 +946,40 @@ export default function Farm({ kidId }: { kidId: string }) {
                       <span>{c.emoji} {c.name}</span>
                       <span className="text-slate-400">🪙{c.seedCost}</span>
                     </span>
-                    <span className="text-xs text-emerald-600">
-                      worth 🪙{sellsFor} at a customer&rsquo;s asking price
+                    <span className="text-xs text-emerald-600">worth 🪙{sellsFor} to the right customer</span>
+                  </button>
+                );
+              })}
+              {ANIMALS.map((a: Animal) => {
+                const cost = animalCost(a, countAnimalType(progress.chunks, a.id));
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => assignCell(cellPicker.chunkIndex, cellPicker.cellIndex, "animal", a.id)}
+                    disabled={progress.coins < cost}
+                    className="flex flex-col rounded-lg px-2 py-1 text-left text-sm hover:bg-sky-50 disabled:opacity-40"
+                  >
+                    <span className="flex items-center justify-between">
+                      <span>{a.emoji} {a.name}</span>
+                      <span className="text-slate-400">🪙{cost}</span>
                     </span>
+                    <span className="text-xs text-emerald-600">makes {a.productEmoji} {a.productName} forever</span>
                   </button>
                 );
               })}
               <button
-                onClick={() => setPlantingPlot(null)}
+                onClick={() => buildBarnAction(cellPicker.chunkIndex)}
+                disabled={!pickerBarnAvailable || progress.coins < BARN_BUILD_COST}
+                className="flex flex-col rounded-lg px-2 py-1 text-left text-sm hover:bg-amber-50 disabled:opacity-40"
+              >
+                <span className="flex items-center justify-between">
+                  <span>🏚️ Build Barn (uses 4 squares)</span>
+                  <span className="text-slate-400">🪙{BARN_BUILD_COST}</span>
+                </span>
+                <span className="text-xs text-amber-600">+{20} more barn storage</span>
+              </button>
+              <button
+                onClick={() => setCellPicker(null)}
                 className="mt-1 text-xs text-slate-400 underline"
               >
                 Cancel
@@ -1036,10 +1004,10 @@ export default function Farm({ kidId }: { kidId: string }) {
       </div>
 
       <p className="max-w-sm text-center text-xs text-slate-400">
-        Plant, then collect into your basket and carry it to the barn to
-        store it. A customer at the stand only wants specific goods — check
-        what they&rsquo;re asking for before you sell. Arrow keys to move,
-        Space to act.
+        Buy land in the shop, then choose crops, animals, or a barn for each
+        square. Collect into your basket and carry it to the barn — or check
+        what the customers at the stand are asking for before you sell.
+        Arrow keys to move, Space to act.
       </p>
     </div>
   );

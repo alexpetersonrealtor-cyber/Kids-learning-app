@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { barnCapacityForLevel, barnToJson, basketToJson, depositBasket, type Barn, type Basket } from "@/lib/farm";
+import { barnToJson, basketToJson, depositBasket, totalBarnCapacity, type Barn, type Basket, type Chunk } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const capacity = barnCapacityForLevel(progress.barnLevel);
+  const capacity = totalBarnCapacity(progress.chunks as unknown as Chunk[]);
   const { basket, barn } = depositBasket(
     progress.basket as unknown as Basket,
     progress.barn as unknown as Barn,

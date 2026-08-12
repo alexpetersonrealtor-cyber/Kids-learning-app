@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { emptyPlots, MAX_UPGRADE_LEVEL, plotsToJson, STARTING_LAND, upgradeCost } from "@/lib/farm";
+import { chunksToJson, initialChunks, MAX_UPGRADE_LEVEL, upgradeCost } from "@/lib/farm";
 
 const STATS = ["watering", "fertilizer"] as const;
 type Stat = (typeof STATS)[number];
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   const progress = await prisma.farmProgress.upsert({
     where: { kidId },
-    create: { kidId, plots: plotsToJson(emptyPlots(STARTING_LAND)) },
+    create: { kidId, chunks: chunksToJson(initialChunks()) },
     update: {},
   });
 

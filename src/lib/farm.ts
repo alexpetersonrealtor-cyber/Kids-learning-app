@@ -26,13 +26,7 @@ export function getCrop(cropId: string): Crop | undefined {
   return CROPS.find((c) => c.id === cropId);
 }
 
-export const STARTING_LAND = 4;
-export const MAX_LAND = 10;
 export const MAX_UPGRADE_LEVEL = 4;
-
-export function landCost(currentLevel: number): number {
-  return 40 + (currentLevel - STARTING_LAND) * 25;
-}
 
 export function upgradeCost(currentLevel: number): number {
   return currentLevel * 50;
@@ -56,19 +50,10 @@ export function effectiveSellPrice(crop: Crop, fertilizerLevel: number): number 
   return Math.round(crop.sellPrice * sellPriceMultiplier(fertilizerLevel));
 }
 
-export interface Plot {
-  crop: string | null;
-  plantedAt: string | null;
-}
-
-export function emptyPlots(count: number): Plot[] {
-  return Array.from({ length: count }, () => ({ crop: null, plantedAt: null }));
-}
-
 // ---- Animals ----
-// An animal is a one-time purchase that, once placed in a pen, produces its
-// good on a repeating timer forever — unlike a crop, harvesting it doesn't
-// clear the pen or cost anything to "replant".
+// An animal is a one-time purchase that, once placed on a cell, produces
+// its good on a repeating timer forever — unlike a crop, collecting it
+// doesn't clear the cell or cost anything to "replant".
 export interface Animal {
   id: string;
   name: string;
@@ -100,70 +85,6 @@ export function getAnimal(animalId: string): Animal | undefined {
   return ANIMALS.find((a) => a.id === animalId);
 }
 
-// Animals are owned in bulk per type (three chickens, two cows, ...), not
-// one-per-slot — all animals of a type share one production cycle, so
-// collecting N chickens' worth of eggs is one action, not N. `capacity` is
-// how many of that type the pen/pasture can currently hold; buying more
-// land for that area (penExpandCost) raises it before more animals of that
-// type can be bought at all.
-export interface AnimalPenState {
-  capacity: number;
-  count: number;
-  lastCollectedAt: string | null;
-}
-
-export type AnimalPens = Record<string, AnimalPenState>;
-
-export function emptyAnimalPens(): AnimalPens {
-  const pens: AnimalPens = {};
-  for (const animal of ANIMALS) {
-    pens[animal.id] = { capacity: 0, count: 0, lastCollectedAt: null };
-  }
-  return pens;
-}
-
-export function getPen(pens: AnimalPens, animalId: string): AnimalPenState {
-  return pens[animalId] ?? { capacity: 0, count: 0, lastCollectedAt: null };
-}
-
-// Cost to expand a pen's capacity by one (unlocks room for one more animal
-// of that type). Buyable even at capacity 0 — that's how a pen is unlocked
-// in the first place.
-export function penExpandCost(animal: Animal, currentCapacity: number): number {
-  return Math.round(animal.purchaseCost * 0.4) + currentCapacity * 20;
-}
-
-// Cost of the next individual animal of this type (rises with how many are
-// already owned, same shape as land/seed cost curves elsewhere).
-export function animalCost(animal: Animal, currentCount: number): number {
-  return animal.purchaseCost + currentCount * Math.round(animal.purchaseCost * 0.3);
-}
-
-export const MAX_PEN_CAPACITY = 8;
-
-export type PenStatus = "empty" | "producing" | "ready";
-
-export function penState(pen: AnimalPenState, animal: Animal, now: number): PenStatus {
-  if (pen.count === 0 || !pen.lastCollectedAt) return "empty";
-  const readyAt = new Date(pen.lastCollectedAt).getTime() + animal.cycleTimeMs;
-  return now >= readyAt ? "ready" : "producing";
-}
-
-export function penProgress(pen: AnimalPenState, animal: Animal, now: number): number {
-  if (pen.count === 0 || !pen.lastCollectedAt) return 0;
-  const elapsed = now - new Date(pen.lastCollectedAt).getTime();
-  return Math.max(0, Math.min(1, elapsed / animal.cycleTimeMs));
-}
-
-// Adds up to `quantity` units of itemId to the barn, respecting capacity.
-// Returns how many actually fit.
-export function addManyToBarn(barn: Barn, itemId: string, quantity: number, capacity: number): number {
-  const room = Math.max(0, capacity - barnTotal(barn));
-  const added = Math.min(room, quantity);
-  if (added > 0) barn[itemId] = (barn[itemId] ?? 0) + added;
-  return added;
-}
-
 // ---- Unified sellable items (crops + animal products) ----
 export interface SellableItem {
   id: string;
@@ -182,23 +103,156 @@ export function getSellableItem(itemId: string): SellableItem | undefined {
   return undefined;
 }
 
-export function allSellableItemIds(): string[] {
-  return [...CROPS.map((c) => c.id), ...ANIMALS.map((a) => a.productId)];
+// ---- World: a grid of purchasable 3x3 chunks ----
+// The world grows in every direction, not just one line: each purchased
+// chunk of land is a 3x3 block of 9 individually-assignable cells (crop,
+// animal, or contributing toward a barn), and chunks themselves are placed
+// around the starting chunk (origin) in a ring — buy more, walk farther.
+export type CellContent = "empty" | "crop" | "animal" | "barn";
+
+export interface Cell {
+  content: CellContent;
+  itemId: string | null; // crop id or animal id; null for empty/barn
+  timestamp: string | null; // plantedAt / producedAt; null for empty/barn
+}
+
+export interface Chunk {
+  cx: number;
+  cy: number;
+  cells: Cell[]; // always CELLS_PER_CHUNK long
+}
+
+export const CHUNK_SIZE = 3;
+export const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
+
+// Fixed expansion order (origin, then the 8 chunks surrounding it) — every
+// new chunk purchase reveals the next one in this ring, so land grows
+// outward in every direction instead of along one line.
+export const CHUNK_OFFSETS: [number, number][] = [
+  [0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [-1, -1], [1, -1],
+];
+export const MAX_CHUNKS = CHUNK_OFFSETS.length;
+
+export function emptyCell(): Cell {
+  return { content: "empty", itemId: null, timestamp: null };
+}
+
+export function emptyChunk(cx: number, cy: number): Chunk {
+  return { cx, cy, cells: Array.from({ length: CELLS_PER_CHUNK }, emptyCell) };
+}
+
+export function initialChunks(): Chunk[] {
+  const [cx, cy] = CHUNK_OFFSETS[0];
+  return [emptyChunk(cx, cy)];
+}
+
+export function chunkCost(ownedCount: number): number {
+  return 120 + ownedCount * 90;
+}
+
+export type CellStatus = "empty" | "growing" | "ready" | "barn";
+
+function cellDurationMs(cell: Cell, wateringLevel: number): number | null {
+  if (cell.content === "crop" && cell.itemId) {
+    const crop = getCrop(cell.itemId);
+    return crop ? effectiveGrowTimeMs(crop, wateringLevel) : null;
+  }
+  if (cell.content === "animal" && cell.itemId) {
+    const animal = getAnimal(cell.itemId);
+    return animal ? animal.cycleTimeMs : null;
+  }
+  return null;
+}
+
+export function cellState(cell: Cell, wateringLevel: number, now: number): CellStatus {
+  if (cell.content === "barn") return "barn";
+  if (cell.content === "empty" || !cell.itemId || !cell.timestamp) return "empty";
+  const duration = cellDurationMs(cell, wateringLevel);
+  if (duration == null) return "empty";
+  const readyAt = new Date(cell.timestamp).getTime() + duration;
+  return now >= readyAt ? "ready" : "growing";
+}
+
+export function cellProgress(cell: Cell, wateringLevel: number, now: number): number {
+  if (cell.content === "empty" || cell.content === "barn" || !cell.itemId || !cell.timestamp) return 0;
+  const duration = cellDurationMs(cell, wateringLevel);
+  if (!duration) return 0;
+  const elapsed = now - new Date(cell.timestamp).getTime();
+  return Math.max(0, Math.min(1, elapsed / duration));
+}
+
+// The item a ready/growing cell will yield when collected — the crop
+// itself, or the animal's product (not the animal).
+export function cellSellableItemId(cell: Cell): string | null {
+  if (cell.content === "crop" && cell.itemId) return cell.itemId;
+  if (cell.content === "animal" && cell.itemId) {
+    const animal = getAnimal(cell.itemId);
+    return animal ? animal.productId : null;
+  }
+  return null;
+}
+
+export function plantCell(content: "crop" | "animal", itemId: string): Cell {
+  return { content, itemId, timestamp: new Date().toISOString() };
+}
+
+// Harvesting a crop clears the cell back to empty (must replant). Collecting
+// an animal keeps it in place and just resets its cycle — it was a one-time
+// purchase, not a consumable.
+export function harvestCropCell(): Cell {
+  return emptyCell();
+}
+
+export function collectAnimalCell(cell: Cell): Cell {
+  return { ...cell, timestamp: new Date().toISOString() };
+}
+
+export function emptyCellIndices(chunk: Chunk): number[] {
+  return chunk.cells.reduce<number[]>((acc, c, i) => {
+    if (c.content === "empty") acc.push(i);
+    return acc;
+  }, []);
+}
+
+// ---- Barns: built by dedicating 4 of a chunk's 9 cells ----
+// A barn's physical footprint stays fixed (4 cells) — upgrading storage
+// means building another barn elsewhere, not making an existing one bigger.
+export const BARN_CELLS_REQUIRED = 4;
+export const BARN_BUILD_COST = 300;
+export const BARN_CAPACITY_PER_BUILD = 20;
+export const BASE_BARN_CAPACITY = 20; // the original barn, already standing at spawn
+
+export function canBuildBarn(chunk: Chunk): boolean {
+  return emptyCellIndices(chunk).length >= BARN_CELLS_REQUIRED;
+}
+
+export function buildBarn(chunk: Chunk): Chunk {
+  const indices = new Set(emptyCellIndices(chunk).slice(0, BARN_CELLS_REQUIRED));
+  const cells = chunk.cells.map((c, i) => (indices.has(i) ? { content: "barn" as const, itemId: null, timestamp: null } : c));
+  return { ...chunk, cells };
+}
+
+export function totalBarnCapacity(chunks: Chunk[]): number {
+  const barnCells = chunks.reduce((sum, chunk) => sum + chunk.cells.filter((c) => c.content === "barn").length, 0);
+  const builtBarns = Math.floor(barnCells / BARN_CELLS_REQUIRED);
+  return BASE_BARN_CAPACITY + builtBarns * BARN_CAPACITY_PER_BUILD;
+}
+
+// Cost of the next individual animal of this type (rises with how many are
+// already placed across every chunk).
+export function countAnimalType(chunks: Chunk[], animalId: string): number {
+  return chunks.reduce(
+    (sum, chunk) => sum + chunk.cells.filter((c) => c.content === "animal" && c.itemId === animalId).length,
+    0,
+  );
+}
+
+export function animalCost(animal: Animal, currentCount: number): number {
+  return animal.purchaseCost + currentCount * Math.round(animal.purchaseCost * 0.3);
 }
 
 // ---- Barn storage ----
 export type Barn = Record<string, number>;
-
-export const STARTING_BARN_LEVEL = 1;
-export const MAX_BARN_LEVEL = 5;
-
-export function barnCapacityForLevel(level: number): number {
-  return 20 + (level - 1) * 16;
-}
-
-export function barnUpgradeCost(currentLevel: number): number {
-  return 60 + currentLevel * 60;
-}
 
 export function barnTotal(barn: Barn): number {
   return Object.values(barn).reduce((sum, n) => sum + n, 0);
@@ -216,10 +270,10 @@ export function addToBarn(barn: Barn, itemId: string, capacity: number): boolean
 // ---- Basket ----
 // Without auto-harvest, harvesting/collecting doesn't go straight into the
 // barn — it goes into the basket the kid is physically carrying, which has
-// to be walked over to the barn and deposited. Auto-harvest skips the
-// basket entirely and deposits straight into the barn (that's the whole
-// point of buying it). Small capacity on purpose — it forces regular trips
-// back to the barn rather than letting one basket hold an unlimited haul.
+// to be walked over to a barn and deposited. Auto-harvest skips the basket
+// entirely and deposits straight into a barn (that's the whole point of
+// buying it). Small capacity on purpose — it forces regular trips back to
+// the barn rather than letting one basket hold an unlimited haul.
 export type Basket = Record<string, number>;
 export const BASKET_CAPACITY = 8;
 
@@ -240,7 +294,9 @@ export function depositBasket(basket: Basket, barn: Barn, capacity: number): { b
   const nextBasket: Basket = { ...basket };
   const nextBarn: Barn = { ...barn };
   for (const [itemId, qty] of Object.entries(basket)) {
-    const added = addManyToBarn(nextBarn, itemId, qty, capacity);
+    const room = Math.max(0, capacity - barnTotal(nextBarn));
+    const added = Math.min(room, qty);
+    if (added > 0) nextBarn[itemId] = (nextBarn[itemId] ?? 0) + added;
     if (added >= qty) delete nextBasket[itemId];
     else nextBasket[itemId] = qty - added;
   }
@@ -252,10 +308,11 @@ export function basketToJson(basket: Basket): Prisma.InputJsonValue {
 }
 
 // ---- Customer orders ----
-// Selling only ever happens by fulfilling the current customer's order —
-// there's no "just sell whatever" option, and orders are only ever created
-// or fulfilled from an explicit in-session action (never during the offline
-// auto-harvest/auto-plant catch-up below).
+// Selling only ever happens by fulfilling a customer's order — there's no
+// "just sell whatever" option, and orders are only ever created or
+// fulfilled from an explicit in-session action (never during the offline
+// auto-harvest/auto-plant catch-up below). Up to MAX_CUSTOMERS wait at the
+// stand at once.
 export interface CustomerOrder {
   itemId: string;
   quantity: number;
@@ -263,6 +320,7 @@ export interface CustomerOrder {
   createdAt: string;
 }
 
+export const MAX_CUSTOMERS = 3;
 const ORDER_REWARD_MULTIPLIER = 1.4;
 const ORDER_MAX_QUANTITY = 4;
 
@@ -276,8 +334,23 @@ export function generateOrder(availableItemIds: string[], rand: () => number): C
   return { itemId, quantity, reward, createdAt: new Date().toISOString() };
 }
 
+// Tops the order list back up to MAX_CUSTOMERS.
+export function fillOrders(existing: CustomerOrder[], availableItemIds: string[], rand: () => number): CustomerOrder[] {
+  const orders = [...existing];
+  while (orders.length < MAX_CUSTOMERS) {
+    const order = generateOrder(availableItemIds, rand);
+    if (!order) break;
+    orders.push(order);
+  }
+  return orders;
+}
+
 export function canFulfillOrder(barn: Barn, order: CustomerOrder): boolean {
   return (barn[order.itemId] ?? 0) >= order.quantity;
+}
+
+export function ordersToJson(orders: CustomerOrder[]): Prisma.InputJsonValue {
+  return orders as unknown as Prisma.InputJsonValue;
 }
 
 // ---- Automation (auto-harvest / auto-plant) ----
@@ -295,97 +368,65 @@ export const AUTO_PLANT_COST = 750; // requires auto-harvest already owned
 export interface FarmAutoState {
   coins: number;
   wateringLevel: number;
-  barnLevel: number;
   autoHarvest: boolean;
   autoPlant: boolean;
-  plots: Plot[];
-  animalPens: AnimalPens;
+  chunks: Chunk[];
   barn: Barn;
 }
 
-const MAX_AUTO_CYCLES_PER_SLOT = 200; // safety bound, not a balance lever
+const MAX_AUTO_CYCLES_PER_CELL = 200; // safety bound, not a balance lever
 
 export function simulateAutoCycles(state: FarmAutoState, nowMs: number): FarmAutoState {
   if (!state.autoHarvest) return state;
 
-  const capacity = barnCapacityForLevel(state.barnLevel);
+  const capacity = totalBarnCapacity(state.chunks);
   let coins = state.coins;
   const barn: Barn = { ...state.barn };
-  const plots = state.plots.map((p) => ({ ...p }));
-  const animalPens: AnimalPens = {};
-  for (const [id, pen] of Object.entries(state.animalPens)) animalPens[id] = { ...pen };
+  const chunks = state.chunks.map((chunk) => ({ ...chunk, cells: chunk.cells.map((c) => ({ ...c })) }));
 
-  for (const plot of plots) {
-    for (let i = 0; i < MAX_AUTO_CYCLES_PER_SLOT; i++) {
-      if (!plot.crop || !plot.plantedAt) break;
-      const crop = getCrop(plot.crop);
-      if (!crop) break;
-      const readyAt = new Date(plot.plantedAt).getTime() + effectiveGrowTimeMs(crop, state.wateringLevel);
-      if (readyAt > nowMs) break;
-      if (!addToBarn(barn, crop.id, capacity)) break; // barn full — leave it standing ready
-      if (state.autoPlant && coins >= crop.seedCost) {
-        coins -= crop.seedCost;
-        plot.plantedAt = new Date(readyAt).toISOString();
-      } else {
-        plot.crop = null;
-        plot.plantedAt = null;
-        break;
+  for (const chunk of chunks) {
+    for (const cell of chunk.cells) {
+      for (let i = 0; i < MAX_AUTO_CYCLES_PER_CELL; i++) {
+        if (cell.content === "crop" && cell.itemId && cell.timestamp) {
+          const crop = getCrop(cell.itemId);
+          if (!crop) break;
+          const readyAt = new Date(cell.timestamp).getTime() + effectiveGrowTimeMs(crop, state.wateringLevel);
+          if (readyAt > nowMs) break;
+          if (!addToBarn(barn, crop.id, capacity)) break; // barn full — leave it standing ready
+          if (state.autoPlant && coins >= crop.seedCost) {
+            coins -= crop.seedCost;
+            cell.timestamp = new Date(readyAt).toISOString();
+          } else {
+            cell.content = "empty";
+            cell.itemId = null;
+            cell.timestamp = null;
+            break;
+          }
+        } else if (cell.content === "animal" && cell.itemId && cell.timestamp) {
+          const animal = getAnimal(cell.itemId);
+          if (!animal) break;
+          const readyAt = new Date(cell.timestamp).getTime() + animal.cycleTimeMs;
+          if (readyAt > nowMs) break;
+          if (!addToBarn(barn, animal.productId, capacity)) break;
+          cell.timestamp = new Date(readyAt).toISOString();
+        } else {
+          break;
+        }
       }
     }
   }
 
-  for (const animal of ANIMALS) {
-    const pen = animalPens[animal.id];
-    if (!pen) continue;
-    for (let i = 0; i < MAX_AUTO_CYCLES_PER_SLOT; i++) {
-      if (pen.count === 0 || !pen.lastCollectedAt) break;
-      const readyAt = new Date(pen.lastCollectedAt).getTime() + animal.cycleTimeMs;
-      if (readyAt > nowMs) break;
-      const added = addManyToBarn(barn, animal.productId, pen.count, capacity);
-      if (added === 0) break; // barn full
-      pen.lastCollectedAt = new Date(readyAt).toISOString();
-      if (added < pen.count) break; // barn filled up partway through this cycle's yield
-    }
-  }
-
-  return { ...state, coins, barn, plots, animalPens };
-}
-
-export type PlotStatus = "empty" | "growing" | "ready";
-
-export function plotState(plot: Plot, wateringLevel: number, now: number): PlotStatus {
-  if (!plot.crop || !plot.plantedAt) return "empty";
-  const crop = getCrop(plot.crop);
-  if (!crop) return "empty";
-  const readyAt = new Date(plot.plantedAt).getTime() + effectiveGrowTimeMs(crop, wateringLevel);
-  return now >= readyAt ? "ready" : "growing";
-}
-
-export function growProgress(plot: Plot, wateringLevel: number, now: number): number {
-  if (!plot.crop || !plot.plantedAt) return 0;
-  const crop = getCrop(plot.crop);
-  if (!crop) return 0;
-  const total = effectiveGrowTimeMs(crop, wateringLevel);
-  const elapsed = now - new Date(plot.plantedAt).getTime();
-  return Math.max(0, Math.min(1, elapsed / total));
+  return { ...state, coins, barn, chunks };
 }
 
 // Prisma's Json input type wants each array/object element to satisfy an
 // indexed InputJsonObject shape, which plain named interfaces don't
 // structurally match — bridge it here once instead of casting at every
 // call site.
-export function plotsToJson(plots: Plot[]): Prisma.InputJsonValue {
-  return plots as unknown as Prisma.InputJsonValue;
-}
-
-export function animalPensToJson(pens: AnimalPens): Prisma.InputJsonValue {
-  return pens as unknown as Prisma.InputJsonValue;
+export function chunksToJson(chunks: Chunk[]): Prisma.InputJsonValue {
+  return chunks as unknown as Prisma.InputJsonValue;
 }
 
 export function barnToJson(barn: Barn): Prisma.InputJsonValue {
   return barn as unknown as Prisma.InputJsonValue;
-}
-
-export function orderToJson(order: CustomerOrder | null): Prisma.InputJsonValue {
-  return order as unknown as Prisma.InputJsonValue;
 }

@@ -4,19 +4,16 @@ import { prisma } from "@/lib/prisma";
 import {
   ANIMALS,
   CROPS,
-  animalPensToJson,
   barnToJson,
-  emptyPlots,
-  generateOrder,
-  getPen,
-  orderToJson,
-  plotsToJson,
+  chunksToJson,
+  countAnimalType,
+  fillOrders,
+  initialChunks,
+  ordersToJson,
   simulateAutoCycles,
-  STARTING_LAND,
-  type AnimalPens,
   type Barn,
+  type Chunk,
   type CustomerOrder,
-  type Plot,
 } from "@/lib/farm";
 
 export async function GET(req: NextRequest) {
@@ -37,7 +34,7 @@ export async function GET(req: NextRequest) {
 
   const progress = await prisma.farmProgress.upsert({
     where: { kidId },
-    create: { kidId, plots: plotsToJson(emptyPlots(STARTING_LAND)) },
+    create: { kidId, chunks: chunksToJson(initialChunks()) },
     update: {},
   });
 
@@ -46,31 +43,27 @@ export async function GET(req: NextRequest) {
     {
       coins: progress.coins,
       wateringLevel: progress.wateringLevel,
-      barnLevel: progress.barnLevel,
       autoHarvest: progress.autoHarvest,
       autoPlant: progress.autoPlant,
-      plots: progress.plots as unknown as Plot[],
-      animalPens: progress.animalPens as unknown as AnimalPens,
+      chunks: progress.chunks as unknown as Chunk[],
       barn: progress.barn as unknown as Barn,
     },
     now.getTime(),
   );
 
-  const pens = simulated.animalPens;
   const availableItemIds = [
     ...CROPS.map((c) => c.id),
-    ...ANIMALS.filter((a) => getPen(pens, a.id).count > 0).map((a) => a.productId),
+    ...ANIMALS.filter((a) => countAnimalType(simulated.chunks, a.id) > 0).map((a) => a.productId),
   ];
-  const currentOrder = (progress.currentOrder as unknown as CustomerOrder | null) ?? generateOrder(availableItemIds, Math.random);
+  const orders = fillOrders(progress.currentOrders as unknown as CustomerOrder[], availableItemIds, Math.random);
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },
     data: {
       coins: simulated.coins,
-      plots: plotsToJson(simulated.plots),
-      animalPens: animalPensToJson(simulated.animalPens),
+      chunks: chunksToJson(simulated.chunks),
       barn: barnToJson(simulated.barn),
-      currentOrder: currentOrder ? orderToJson(currentOrder) : undefined,
+      currentOrders: ordersToJson(orders),
       lastAutoTickAt: now,
     },
   });
