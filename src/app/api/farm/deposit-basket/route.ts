@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { basketToJson, effectiveSellPrice, getCrop } from "@/lib/farm";
+import { barnCapacityForLevel, barnToJson, basketToJson, depositBasket, type Barn, type Basket } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
@@ -31,21 +31,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const basket = progress.basket as unknown as string[];
-  if (basket.length === 0) {
-    return NextResponse.json({ error: "basket empty" }, { status: 400 });
-  }
-
-  let earned = 0;
-  for (const cropId of basket) {
-    const crop = getCrop(cropId);
-    if (crop) earned += effectiveSellPrice(crop, progress.fertilizerLevel);
-  }
+  const capacity = barnCapacityForLevel(progress.barnLevel);
+  const { basket, barn } = depositBasket(
+    progress.basket as unknown as Basket,
+    progress.barn as unknown as Barn,
+    capacity,
+  );
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },
-    data: { coins: progress.coins + earned, basket: basketToJson([]) },
+    data: { basket: basketToJson(basket), barn: barnToJson(barn) },
   });
 
-  return NextResponse.json({ progress: updated, earned });
+  return NextResponse.json({ progress: updated });
 }

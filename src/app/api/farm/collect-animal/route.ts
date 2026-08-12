@@ -4,22 +4,23 @@ import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  addToBarn,
+  addManyToBarn,
   addToBasket,
+  animalPensToJson,
   barnCapacityForLevel,
   barnToJson,
   basketToJson,
-  effectiveGrowTimeMs,
-  getCrop,
-  plotsToJson,
+  getAnimal,
+  getPen,
+  penState,
+  type AnimalPens,
   type Barn,
   type Basket,
-  type Plot,
 } from "@/lib/farm";
 
 const bodySchema = z.object({
   kidId: z.string().min(1),
-  plotIndex: z.number().int().min(0),
+  animalId: z.string().min(1),
 });
 
 export async function POST(req: NextRequest) {
@@ -33,7 +34,12 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  const { kidId, plotIndex } = parsed.data;
+  const { kidId, animalId } = parsed.data;
+
+  const animal = getAnimal(animalId);
+  if (!animal) {
+    return NextResponse.json({ error: "unknown animal" }, { status: 400 });
+  }
 
   const kid = await prisma.kid.findFirst({ where: { id: kidId, parentId } });
   if (!kid) {
@@ -45,38 +51,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no farm yet" }, { status: 400 });
   }
 
-  const plots = progress.plots as unknown as Plot[];
-  const plot = plots[plotIndex];
-  if (!plot?.crop || !plot.plantedAt) {
-    return NextResponse.json({ error: "nothing planted" }, { status: 400 });
-  }
-  const crop = getCrop(plot.crop);
-  if (!crop) {
-    return NextResponse.json({ error: "unknown crop" }, { status: 400 });
-  }
-  const readyAt = new Date(plot.plantedAt).getTime() + effectiveGrowTimeMs(crop, progress.wateringLevel);
-  if (Date.now() < readyAt) {
+  const pens = progress.animalPens as unknown as AnimalPens;
+  const pen = getPen(pens, animalId);
+  if (penState(pen, animal, Date.now()) !== "ready") {
     return NextResponse.json({ error: "not ready" }, { status: 400 });
   }
 
-  // Auto-harvest deposits straight into the barn; otherwise it goes into
-  // the basket, which has to be carried over and deposited manually.
   let data: Prisma.FarmProgressUpdateInput;
   if (progress.autoHarvest) {
     const barn = progress.barn as unknown as Barn;
     const capacity = barnCapacityForLevel(progress.barnLevel);
-    if (!addToBarn(barn, crop.id, capacity)) {
+    const added = addManyToBarn(barn, animal.productId, pen.count, capacity);
+    if (added < pen.count) {
       return NextResponse.json({ error: "barn full" }, { status: 400 });
     }
-    plots[plotIndex] = { crop: null, plantedAt: null };
-    data = { plots: plotsToJson(plots), barn: barnToJson(barn) };
+    pens[animalId] = { ...pen, lastCollectedAt: new Date().toISOString() };
+    data = { barn: barnToJson(barn), animalPens: animalPensToJson(pens) };
   } else {
     const basket = progress.basket as unknown as Basket;
-    if (addToBasket(basket, crop.id, 1) === 0) {
+    const added = addToBasket(basket, animal.productId, pen.count);
+    if (added < pen.count) {
       return NextResponse.json({ error: "basket full" }, { status: 400 });
     }
-    plots[plotIndex] = { crop: null, plantedAt: null };
-    data = { plots: plotsToJson(plots), basket: basketToJson(basket) };
+    pens[animalId] = { ...pen, lastCollectedAt: new Date().toISOString() };
+    data = { basket: basketToJson(basket), animalPens: animalPensToJson(pens) };
   }
 
   const updated = await prisma.farmProgress.update({ where: { kidId }, data });

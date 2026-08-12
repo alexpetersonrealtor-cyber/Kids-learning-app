@@ -119,7 +119,11 @@ model TrackRecord {
 // One row per kid: their farm-game currency, land, upgrades, and plot state.
 // Plots are small/bounded (max 10) so they're stored as a JSON array rather
 // than a separate table — each entry is either null (empty) or
-// { crop: string, plantedAt: ISO string }.
+// { crop: string, plantedAt: ISO string }. animalPens is a JSON object keyed
+// by animal id ({ capacity, count, lastCollectedAt }) — see src/lib/farm.ts.
+// barn is a JSON object keyed by sellable item id -> quantity. Selling only
+// ever happens by fulfilling currentOrder during an active session; auto
+// harvest/plant may run offline (see lastAutoTickAt) but never sells.
 model FarmProgress {
   id              String   @id @default(cuid())
   kidId           String   @unique
@@ -128,8 +132,15 @@ model FarmProgress {
   landLevel       Int      @default(4)
   wateringLevel   Int      @default(1)
   fertilizerLevel Int      @default(1)
+  barnLevel       Int      @default(1)
+  autoHarvest     Boolean  @default(false)
+  autoPlant       Boolean  @default(false)
   plots           Json     @default("[]")
-  basket          Json     @default("[]")
+  animalPens      Json     @default("{}")
+  barn            Json     @default("{}")
+  basket          Json     @default("{}")
+  currentOrder    Json?
+  lastAutoTickAt  DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
 

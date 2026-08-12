@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { emptyPlots, plotsToJson, STARTING_LAND } from "@/lib/farm";
+import {
+  ANIMALS,
+  CROPS,
+  animalPensToJson,
+  barnToJson,
+  emptyPlots,
+  generateOrder,
+  getPen,
+  orderToJson,
+  plotsToJson,
+  simulateAutoCycles,
+  STARTING_LAND,
+  type AnimalPens,
+  type Barn,
+  type CustomerOrder,
+  type Plot,
+} from "@/lib/farm";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -25,5 +41,39 @@ export async function GET(req: NextRequest) {
     update: {},
   });
 
-  return NextResponse.json({ progress });
+  const now = new Date();
+  const simulated = simulateAutoCycles(
+    {
+      coins: progress.coins,
+      wateringLevel: progress.wateringLevel,
+      barnLevel: progress.barnLevel,
+      autoHarvest: progress.autoHarvest,
+      autoPlant: progress.autoPlant,
+      plots: progress.plots as unknown as Plot[],
+      animalPens: progress.animalPens as unknown as AnimalPens,
+      barn: progress.barn as unknown as Barn,
+    },
+    now.getTime(),
+  );
+
+  const pens = simulated.animalPens;
+  const availableItemIds = [
+    ...CROPS.map((c) => c.id),
+    ...ANIMALS.filter((a) => getPen(pens, a.id).count > 0).map((a) => a.productId),
+  ];
+  const currentOrder = (progress.currentOrder as unknown as CustomerOrder | null) ?? generateOrder(availableItemIds, Math.random);
+
+  const updated = await prisma.farmProgress.update({
+    where: { kidId },
+    data: {
+      coins: simulated.coins,
+      plots: plotsToJson(simulated.plots),
+      animalPens: animalPensToJson(simulated.animalPens),
+      barn: barnToJson(simulated.barn),
+      currentOrder: currentOrder ? orderToJson(currentOrder) : undefined,
+      lastAutoTickAt: now,
+    },
+  });
+
+  return NextResponse.json({ progress: updated });
 }
