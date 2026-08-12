@@ -8,6 +8,7 @@ import {
   canFulfillOrder,
   fillOrders,
   ordersToJson,
+  pruneStaleOrders,
   type Barn,
   type Chunk,
   type CustomerOrder,
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
   if (barn[order.itemId] <= 0) delete barn[order.itemId];
 
   const chunks = progress.chunks as unknown as Chunk[];
-  const remainingOrders = orders.filter((_, i) => i !== orderIndex);
+  const remainingOrders = pruneStaleOrders(orders.filter((_, i) => i !== orderIndex), chunks);
   const nextOrders = fillOrders(remainingOrders, availableOrderItemIds(chunks), Math.random);
 
   const updated = await prisma.farmProgress.update({

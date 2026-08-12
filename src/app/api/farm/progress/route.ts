@@ -8,6 +8,7 @@ import {
   fillOrders,
   initialChunks,
   ordersToJson,
+  pruneStaleOrders,
   simulateAutoCycles,
   type Barn,
   type Chunk,
@@ -49,11 +50,8 @@ export async function GET(req: NextRequest) {
     now.getTime(),
   );
 
-  const orders = fillOrders(
-    progress.currentOrders as unknown as CustomerOrder[],
-    availableOrderItemIds(simulated.chunks),
-    Math.random,
-  );
+  const validOrders = pruneStaleOrders(progress.currentOrders as unknown as CustomerOrder[], simulated.chunks);
+  const orders = fillOrders(validOrders, availableOrderItemIds(simulated.chunks), Math.random);
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },

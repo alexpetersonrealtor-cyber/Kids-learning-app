@@ -33,6 +33,7 @@ import {
   harvestCropCell,
   initialChunks,
   plantCell,
+  pruneStaleOrders,
   totalBarnCapacity,
   upgradeCost,
   MAX_CUSTOMERS,
@@ -216,8 +217,9 @@ export default function Farm({ kidId }: { kidId: string }) {
   // whenever a sync doesn't come back with a full set.
   function ensureOrders() {
     setProgress((p) => {
-      if (p.currentOrders.length >= MAX_CUSTOMERS) return p;
-      return { ...p, currentOrders: fillOrders(p.currentOrders, availableOrderItemIds(p.chunks), Math.random) };
+      const validOrders = pruneStaleOrders(p.currentOrders, p.chunks);
+      if (validOrders.length >= MAX_CUSTOMERS && validOrders.length === p.currentOrders.length) return p;
+      return { ...p, currentOrders: fillOrders(validOrders, availableOrderItemIds(p.chunks), Math.random) };
     });
   }
 
@@ -562,13 +564,38 @@ export default function Farm({ kidId }: { kidId: string }) {
       orders.forEach((order, i) => {
         const item = getSellableItem(order.itemId);
         if (!item) return;
-        const ox = TABLE_POS.x - cameraX + (i - 1) * 34;
-        const oy = TABLE_POS.y - cameraY - 46;
-        ctx.font = "18px sans-serif";
-        ctx.fillText("🧑", ox, oy);
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillStyle = canFulfillOrder(barnNow, order) ? "#166534" : "#1e293b";
-        ctx.fillText(`${item.emoji}x${order.quantity}`, ox, oy - 18);
+        const ox = TABLE_POS.x - cameraX + (i - 1) * 56;
+        const faceY = TABLE_POS.y - cameraY - 62;
+        const bubbleY = faceY - 34;
+        const fulfillable = canFulfillOrder(barnNow, order);
+        const label = `${item.emoji} x${order.quantity}`;
+
+        ctx.font = "bold 18px sans-serif";
+        const textWidth = ctx.measureText(label).width;
+        const bubbleW = textWidth + 20;
+        const bubbleH = 30;
+        const bx = ox - bubbleW / 2;
+        const by = bubbleY - bubbleH / 2;
+        ctx.fillStyle = fulfillable ? "#dcfce7" : "#ffffff";
+        ctx.strokeStyle = fulfillable ? "#22c55e" : "#94a3b8";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bubbleW, bubbleH, 9);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ox - 6, by + bubbleH - 1);
+        ctx.lineTo(ox + 6, by + bubbleH - 1);
+        ctx.lineTo(ox, by + bubbleH + 8);
+        ctx.closePath();
+        ctx.fillStyle = fulfillable ? "#dcfce7" : "#ffffff";
+        ctx.fill();
+
+        ctx.fillStyle = fulfillable ? "#166534" : "#1e293b";
+        ctx.fillText(label, ox, bubbleY);
+
+        ctx.font = "32px sans-serif";
+        ctx.fillText("🧑", ox, faceY);
       });
       if (nearTable) {
         const anyFulfillable = orders.some((o) => canFulfillOrder(barnNow, o));

@@ -374,6 +374,15 @@ export function generateOrder(availableItemIds: string[], rand: () => number): C
   return { itemId, quantity, reward, createdAt: new Date().toISOString() };
 }
 
+// Drops any order that no longer fits the current tier rules — e.g. an
+// account that already had orders sitting from before tiers existed, or
+// from before more land was bought, could otherwise keep asking for a
+// pumpkin x4 forever since orders only ever get topped up, never replaced.
+export function pruneStaleOrders(orders: CustomerOrder[], chunks: Chunk[]): CustomerOrder[] {
+  const available = new Set(availableOrderItemIds(chunks));
+  return orders.filter((o) => available.has(o.itemId) && o.quantity <= maxQuantityForTier(itemTier(o.itemId)));
+}
+
 // Tops the order list back up to MAX_CUSTOMERS.
 export function fillOrders(existing: CustomerOrder[], availableItemIds: string[], rand: () => number): CustomerOrder[] {
   const orders = [...existing];
