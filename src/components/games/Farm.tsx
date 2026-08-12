@@ -903,14 +903,23 @@ export default function Farm({ kidId }: { kidId: string }) {
           </button>
         </div>
 
-        <p className="max-w-sm text-center text-xs text-slate-400">
-          Barns aren&rsquo;t bought here — walk to an empty square on land you
-          own and choose &ldquo;Build Barn&rdquo;. It uses up 4 of that
-          plot&rsquo;s 9 squares but adds more storage room.
-        </p>
+        <div className="flex items-center gap-3 rounded-xl bg-amber-50 p-3 shadow">
+          <span className="flex h-8 w-8 items-center justify-center text-2xl">🏚️</span>
+          <div>
+            <p className="font-semibold text-slate-700">Want more barn storage?</p>
+            <p className="text-xs text-slate-500">
+              Barns aren&rsquo;t bought here — walk to an empty square on land
+              you own and choose &ldquo;Build Barn&rdquo;. It uses up 4 of
+              that plot&rsquo;s 9 squares but adds more storage room.
+            </p>
+          </div>
+        </div>
 
-        <button onClick={() => setScreen("world")} className="text-sm text-slate-500 underline">
-          Back to farm
+        <button
+          onClick={() => setScreen("world")}
+          className="rounded-full border-2 border-emerald-600 bg-white px-5 py-2 text-sm font-bold text-emerald-700 shadow hover:bg-emerald-50"
+        >
+          🚜 Back to farm
         </button>
       </div>
     );
@@ -967,8 +976,11 @@ export default function Farm({ kidId }: { kidId: string }) {
           </div>
         )}
 
-        <button onClick={() => setScreen("world")} className="text-sm text-slate-500 underline">
-          Back to farm
+        <button
+          onClick={() => setScreen("world")}
+          className="rounded-full border-2 border-emerald-600 bg-white px-5 py-2 text-sm font-bold text-emerald-700 shadow hover:bg-emerald-50"
+        >
+          🚜 Back to farm
         </button>
       </div>
     );
