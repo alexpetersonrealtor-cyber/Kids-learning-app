@@ -72,13 +72,32 @@ DATABASE_URL="postgresql://kidsapp:kidsapp@localhost:5432/kidsapp" npx prisma mi
 
 ## Backups
 
-Supabase's free tier has no automatic backups or point-in-time recovery. `scripts/backup-db.mjs` does a logical backup — it reads every row via Prisma (not `pg_dump`, so no Postgres client tools required) and writes a single timestamped JSON file:
+Supabase's free tier has no automatic backups or point-in-time recovery. `scripts/backup-db.mjs` does a logical backup — it reads every row of every model via Prisma (not `pg_dump`, so no Postgres client tools required; models are discovered from the schema at runtime, so a newly added model is never silently left out) and writes a single timestamped JSON file:
 
 ```bash
 DATABASE_URL="<your production connection string>" node scripts/backup-db.mjs
 ```
 
 The output lands in `./backups/` (gitignored — it contains PII and password hashes, never commit it). Copy it somewhere durable (cloud storage, an external drive). This same script is also what a scheduled backup routine runs before uploading the result off-box.
+
+`scripts/restore-db.mjs` restores a backup produced above into a **fresh/empty** database — run `npx prisma migrate deploy` against the target first so the schema exists, then:
+
+```bash
+DATABASE_URL="<new database connection string>" node scripts/restore-db.mjs backups/kids-app-backup-....json
+```
+
+### Moving to a different Supabase project/account
+
+Needed any time you're consolidating projects, hitting a plan's per-project pricing, or otherwise relaunching under a new Supabase project without losing data:
+
+1. Take a fresh backup of the *current* project right before cutting over (`scripts/backup-db.mjs` above) — anything written after this point and before the switch is what you'd lose, so do this last, close to the moment of cutover.
+2. Create the new Supabase project, grab its `DATABASE_URL`, and run `DATABASE_URL="<new>" npx prisma migrate deploy` to create the schema.
+3. Restore into it: `DATABASE_URL="<new>" node scripts/restore-db.mjs backups/<the file from step 1>`.
+4. Point Vercel's `DATABASE_URL` env var at the new project and redeploy.
+5. Log in and click around (parent dashboard, each kid's profile, a game or two) against the *new* project to confirm everything's there before touching the old one.
+6. Only then delete the old Supabase project.
+
+Passwords, kid PINs, and every game's progress all live in Postgres and travel with the dump — there's no separate Supabase Auth/Storage to migrate, since the app only ever talks to Supabase as a plain `DATABASE_URL`.
 
 ## Project structure
 
