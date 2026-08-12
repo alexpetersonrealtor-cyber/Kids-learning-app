@@ -523,6 +523,7 @@ export default function Farm({ kidId }: { kidId: string }) {
 
     let lastTime = nowMs();
     let rafId: number;
+    let frameCount = 0;
 
     const frame = (frameNow: number) => {
       const dt = Math.min((frameNow - lastTime) / 1000, 0.05);
@@ -575,218 +576,234 @@ export default function Farm({ kidId }: { kidId: string }) {
         setInteraction({ cell: nearCell, nearBarn, nearTable });
       }
 
-      const sprites = spritesRef.current;
-      const clockNow = currentTimeMs();
-      // Round the camera to whole pixels — a fractional camera offset makes
-      // every world-aligned tile edge (grass, soil, chunk borders) land on a
-      // different sub-pixel each frame, which reads as a flicker/shimmer
-      // across the whole screen while walking.
-      const cameraX = Math.round(Math.max(WORLD_MIN_X, Math.min(player.x - CANVAS_W / 2, WORLD_MAX_X - CANVAS_W)));
-      const cameraY = Math.round(Math.max(WORLD_MIN_Y, Math.min(player.y - CANVAS_H / 2, WORLD_MAX_Y - CANVAS_H)));
+      // Movement and interaction detection above run every frame so input
+      // stays responsive, but the actual canvas redraw below — background,
+      // world tiles, every planted cell, the customer bubbles — is real CPU
+      // work that adds up on weaker hardware. A farm you walk around doesn't
+      // need 60 redraws a second to look smooth, so only draw on every other
+      // frame (~30fps) and leave the previous frame on screen otherwise.
+      frameCount++;
+      if (frameCount % 2 === 0) {
+        const sprites = spritesRef.current;
+        const clockNow = currentTimeMs();
+        // Round the camera to whole pixels — a fractional camera offset makes
+        // every world-aligned tile edge (grass, soil, chunk borders) land on a
+        // different sub-pixel each frame, which reads as a flicker/shimmer
+        // across the whole screen while walking.
+        const cameraX = Math.round(Math.max(WORLD_MIN_X, Math.min(player.x - CANVAS_W / 2, WORLD_MAX_X - CANVAS_W)));
+        const cameraY = Math.round(Math.max(WORLD_MIN_Y, Math.min(player.y - CANVAS_H / 2, WORLD_MAX_Y - CANVAS_H)));
 
-      ctx.fillStyle = "#86c46b";
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-      ctx.fillStyle = "#7bb864";
-      for (let gx = Math.floor(WORLD_MIN_X / 40) * 40; gx < WORLD_MAX_X; gx += 40) {
-        for (let gy = Math.floor(WORLD_MIN_Y / 40) * 40; gy < WORLD_MAX_Y; gy += 40) {
-          const sx = gx - cameraX;
-          const sy = gy - cameraY;
-          if (sx < -40 || sx > CANVAS_W || sy < -40 || sy > CANVAS_H) continue;
-          if (((Math.round(gx / 40) + Math.round(gy / 40)) | 0) % 2 === 0) ctx.fillRect(sx, sy, 40, 40);
+        ctx.fillStyle = "#86c46b";
+        ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        ctx.fillStyle = "#7bb864";
+        // Iterate only the tiles actually inside the camera's view — this used
+        // to loop the *entire* world extent every frame (checking each tile
+        // against the viewport to decide whether to skip it), which scales up
+        // as more land is bought and adds real per-frame CPU work on weaker
+        // hardware for no visual benefit, since only ~18x15 tiles are ever
+        // visible at once regardless of how big the world has grown.
+        const gxStart = Math.floor(cameraX / 40) * 40;
+        const gyStart = Math.floor(cameraY / 40) * 40;
+        for (let gx = gxStart; gx < cameraX + CANVAS_W; gx += 40) {
+          for (let gy = gyStart; gy < cameraY + CANVAS_H; gy += 40) {
+            if (((Math.round(gx / 40) + Math.round(gy / 40)) | 0) % 2 === 0) {
+              ctx.fillRect(gx - cameraX, gy - cameraY, 40, 40);
+            }
+          }
         }
-      }
 
-      drawBarn(ctx, BARN_POS.x - cameraX, BARN_POS.y - cameraY);
-      if (nearBarn) {
-        const basketHas = Object.values(progressRef.current.basket).some((n) => n > 0);
-        ctx.strokeStyle = basketHas ? "#facc15" : "rgba(250,204,21,0.4)";
-        ctx.lineWidth = 3;
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.arc(BARN_POS.x - cameraX, BARN_POS.y - cameraY, BUILDING_RADIUS, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+        drawBarn(ctx, BARN_POS.x - cameraX, BARN_POS.y - cameraY);
+        if (nearBarn) {
+          const basketHas = Object.values(progressRef.current.basket).some((n) => n > 0);
+          ctx.strokeStyle = basketHas ? "#facc15" : "rgba(250,204,21,0.4)";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.arc(BARN_POS.x - cameraX, BARN_POS.y - cameraY, BUILDING_RADIUS, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
-      if (sprites.table?.complete) {
-        const tw = 84;
-        const th = 42;
-        ctx.drawImage(sprites.table, TABLE_POS.x - cameraX - tw / 2, TABLE_POS.y - cameraY - th / 2, tw, th);
-      }
-      const orders = progressRef.current.currentOrders;
-      const barnNow = progressRef.current.barn;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      orders.forEach((order, i) => {
-        const item = getSellableItem(order.itemId);
-        if (!item) return;
-        const ox = TABLE_POS.x - cameraX + (i - 1) * 56;
-        const faceY = TABLE_POS.y - cameraY - 62;
-        const bubbleY = faceY - 34;
-        const have = barnNow[order.itemId] ?? 0;
-        const canFull = have >= order.quantity;
-        const canPartial = have > 0 && !canFull;
-        const bg = canFull ? "#dcfce7" : canPartial ? "#fef9c3" : "#ffffff";
-        const border = canFull ? "#22c55e" : canPartial ? "#eab308" : "#94a3b8";
-        const textColor = canFull ? "#166534" : canPartial ? "#854d0e" : "#1e293b";
-        const label = `${item.emoji} x${order.quantity}`;
+        if (sprites.table?.complete) {
+          const tw = 84;
+          const th = 42;
+          ctx.drawImage(sprites.table, TABLE_POS.x - cameraX - tw / 2, TABLE_POS.y - cameraY - th / 2, tw, th);
+        }
+        const orders = progressRef.current.currentOrders;
+        const barnNow = progressRef.current.barn;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        orders.forEach((order, i) => {
+          const item = getSellableItem(order.itemId);
+          if (!item) return;
+          const ox = TABLE_POS.x - cameraX + (i - 1) * 56;
+          const faceY = TABLE_POS.y - cameraY - 62;
+          const bubbleY = faceY - 34;
+          const have = barnNow[order.itemId] ?? 0;
+          const canFull = have >= order.quantity;
+          const canPartial = have > 0 && !canFull;
+          const bg = canFull ? "#dcfce7" : canPartial ? "#fef9c3" : "#ffffff";
+          const border = canFull ? "#22c55e" : canPartial ? "#eab308" : "#94a3b8";
+          const textColor = canFull ? "#166534" : canPartial ? "#854d0e" : "#1e293b";
+          const label = `${item.emoji} x${order.quantity}`;
 
-        ctx.font = "bold 18px sans-serif";
-        const textWidth = ctx.measureText(label).width;
-        const bubbleW = textWidth + 20;
-        const bubbleH = 30;
-        const bx = ox - bubbleW / 2;
-        const by = bubbleY - bubbleH / 2;
-        ctx.fillStyle = bg;
-        ctx.strokeStyle = border;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        roundRectPath(ctx, bx, by, bubbleW, bubbleH, 9);
-        ctx.fill();
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(ox - 6, by + bubbleH - 1);
-        ctx.lineTo(ox + 6, by + bubbleH - 1);
-        ctx.lineTo(ox, by + bubbleH + 8);
-        ctx.closePath();
-        ctx.fillStyle = bg;
-        ctx.fill();
+          ctx.font = "bold 18px sans-serif";
+          const textWidth = ctx.measureText(label).width;
+          const bubbleW = textWidth + 20;
+          const bubbleH = 30;
+          const bx = ox - bubbleW / 2;
+          const by = bubbleY - bubbleH / 2;
+          ctx.fillStyle = bg;
+          ctx.strokeStyle = border;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          roundRectPath(ctx, bx, by, bubbleW, bubbleH, 9);
+          ctx.fill();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(ox - 6, by + bubbleH - 1);
+          ctx.lineTo(ox + 6, by + bubbleH - 1);
+          ctx.lineTo(ox, by + bubbleH + 8);
+          ctx.closePath();
+          ctx.fillStyle = bg;
+          ctx.fill();
 
-        ctx.fillStyle = textColor;
-        ctx.fillText(label, ox, bubbleY);
+          ctx.fillStyle = textColor;
+          ctx.fillText(label, ox, bubbleY);
 
-        ctx.font = "32px sans-serif";
-        ctx.fillText("🧑", ox, faceY);
-      });
-      if (nearTable) {
-        const anySellable = orders.some((o) => canSellTowardOrder(barnNow, o));
-        ctx.strokeStyle = anySellable ? "#facc15" : "rgba(250,204,21,0.4)";
-        ctx.lineWidth = 3;
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.arc(TABLE_POS.x - cameraX, TABLE_POS.y - cameraY + 10, BUILDING_RADIUS, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+          ctx.font = "32px sans-serif";
+          ctx.fillText("🧑", ox, faceY);
+        });
+        if (nearTable) {
+          const anySellable = orders.some((o) => canSellTowardOrder(barnNow, o));
+          ctx.strokeStyle = anySellable ? "#facc15" : "rgba(250,204,21,0.4)";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.arc(TABLE_POS.x - cameraX, TABLE_POS.y - cameraY + 10, BUILDING_RADIUS, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
-      // Locked chunk placeholders (fixed positions, drawn before owned ones).
-      for (let i = chunks.length; i < CHUNK_OFFSETS.length; i++) {
-        const [cx, cy] = CHUNK_OFFSETS[i];
-        const origin = chunkOrigin(cx, cy);
-        const sx = origin.x - cameraX;
-        const sy = origin.y - cameraY;
-        if (sx < -CHUNK_PIXELS || sx > CANVAS_W || sy < -CHUNK_PIXELS || sy > CANVAS_H) continue;
-        ctx.strokeStyle = "rgba(100,100,100,0.35)";
-        ctx.setLineDash([6, 6]);
-        ctx.lineWidth = 2;
-        ctx.strokeRect(sx + CHUNK_PAD, sy + CHUNK_PAD, CHUNK_CONTENT_SIZE, CHUNK_CONTENT_SIZE);
-        ctx.setLineDash([]);
-        ctx.font = "20px sans-serif";
-        ctx.fillText("🔒", sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 - 8);
-        ctx.font = "bold 11px sans-serif";
-        ctx.fillStyle = "#334155";
-        ctx.fillText(`🪙${chunkCost(i)}`, sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 + 10);
-      }
+        // Locked chunk placeholders (fixed positions, drawn before owned ones).
+        for (let i = chunks.length; i < CHUNK_OFFSETS.length; i++) {
+          const [cx, cy] = CHUNK_OFFSETS[i];
+          const origin = chunkOrigin(cx, cy);
+          const sx = origin.x - cameraX;
+          const sy = origin.y - cameraY;
+          if (sx < -CHUNK_PIXELS || sx > CANVAS_W || sy < -CHUNK_PIXELS || sy > CANVAS_H) continue;
+          ctx.strokeStyle = "rgba(100,100,100,0.35)";
+          ctx.setLineDash([6, 6]);
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx + CHUNK_PAD, sy + CHUNK_PAD, CHUNK_CONTENT_SIZE, CHUNK_CONTENT_SIZE);
+          ctx.setLineDash([]);
+          ctx.font = "20px sans-serif";
+          ctx.fillText("🔒", sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 - 8);
+          ctx.font = "bold 11px sans-serif";
+          ctx.fillStyle = "#334155";
+          ctx.fillText(`🪙${chunkCost(i)}`, sx + CHUNK_PIXELS / 2, sy + CHUNK_PIXELS / 2 + 10);
+        }
 
-      for (let ci = 0; ci < chunks.length; ci++) {
-        const chunk = chunks[ci];
-        const origin = chunkOrigin(chunk.cx, chunk.cy);
-        const csx = origin.x - cameraX;
-        const csy = origin.y - cameraY;
-        if (csx < -CHUNK_PIXELS || csx > CANVAS_W || csy < -CHUNK_PIXELS || csy > CANVAS_H) continue;
+        for (let ci = 0; ci < chunks.length; ci++) {
+          const chunk = chunks[ci];
+          const origin = chunkOrigin(chunk.cx, chunk.cy);
+          const csx = origin.x - cameraX;
+          const csy = origin.y - cameraY;
+          if (csx < -CHUNK_PIXELS || csx > CANVAS_W || csy < -CHUNK_PIXELS || csy > CANVAS_H) continue;
 
-        for (let row = 0; row < CHUNK_SIZE; row++) {
-          for (let col = 0; col < CHUNK_SIZE; col++) {
-            const idx = row * CHUNK_SIZE + col;
-            const cell = chunk.cells[idx];
-            const center = cellCenter(origin, row, col);
-            const sx = center.x - cameraX;
-            const sy = center.y - cameraY;
+          for (let row = 0; row < CHUNK_SIZE; row++) {
+            for (let col = 0; col < CHUNK_SIZE; col++) {
+              const idx = row * CHUNK_SIZE + col;
+              const cell = chunk.cells[idx];
+              const center = cellCenter(origin, row, col);
+              const sx = center.x - cameraX;
+              const sy = center.y - cameraY;
 
-            if (cell.content === "barn") {
-              ctx.fillStyle = "#92400e";
-              ctx.fillRect(sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
-              ctx.font = "22px sans-serif";
-              ctx.fillText("🏚️", sx, sy);
-              continue;
-            }
-
-            if (sprites.soil?.complete) {
-              ctx.drawImage(sprites.soil, sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
-            }
-
-            const isNear = interactionRef.current.cell?.chunkIndex === ci && interactionRef.current.cell?.cellIndex === idx;
-            if (isNear) {
-              ctx.strokeStyle = "#38bdf8";
-              ctx.lineWidth = 3;
-              ctx.setLineDash([5, 5]);
-              ctx.beginPath();
-              ctx.arc(sx, sy, INTERACT_RADIUS, 0, Math.PI * 2);
-              ctx.stroke();
-              ctx.setLineDash([]);
-            }
-
-            const state = cellState(cell, progressRef.current.wateringLevel, clockNow);
-            if (cell.content === "empty") {
-              ctx.font = "14px sans-serif";
-              ctx.fillStyle = "rgba(255,255,255,0.8)";
-              ctx.fillText("+", sx, sy);
-            } else if (cell.content === "crop" && cell.itemId) {
-              const crop = getCrop(cell.itemId);
-              if (crop) {
-                if (state === "growing") {
-                  const total = crop.growTimeMs;
-                  const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
-                  const frac = Math.max(0, Math.min(1, elapsed / total));
-                  ctx.font = `${12 + frac * 12}px sans-serif`;
-                  ctx.globalAlpha = 0.85;
-                  ctx.fillText(crop.emoji, sx, sy);
-                  ctx.globalAlpha = 1;
-                  ctx.fillStyle = "rgba(255,255,255,0.7)";
-                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
-                  ctx.fillStyle = "#22c55e";
-                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
-                } else {
-                  const bounce = Math.sin(frameNow / 180) * 2;
-                  ctx.font = "24px sans-serif";
-                  ctx.fillText(crop.emoji, sx, sy + bounce);
-                }
+              if (cell.content === "barn") {
+                ctx.fillStyle = "#92400e";
+                ctx.fillRect(sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+                ctx.font = "22px sans-serif";
+                ctx.fillText("🏚️", sx, sy);
+                continue;
               }
-            } else if (cell.content === "animal" && cell.itemId) {
-              const animal = getAnimal(cell.itemId);
-              if (animal) {
-                if (state === "growing") {
-                  const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
-                  const frac = Math.max(0, Math.min(1, elapsed / animal.cycleTimeMs));
-                  ctx.font = "20px sans-serif";
-                  ctx.fillText(animal.emoji, sx, sy);
-                  ctx.fillStyle = "rgba(255,255,255,0.7)";
-                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
-                  ctx.fillStyle = "#22c55e";
-                  ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
-                } else {
-                  const bounce = Math.sin(frameNow / 180) * 2;
-                  ctx.font = "24px sans-serif";
-                  ctx.fillText(animal.emoji, sx, sy + bounce);
+
+              if (sprites.soil?.complete) {
+                ctx.drawImage(sprites.soil, sx - CELL_SIZE / 2, sy - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+              }
+
+              const isNear = interactionRef.current.cell?.chunkIndex === ci && interactionRef.current.cell?.cellIndex === idx;
+              if (isNear) {
+                ctx.strokeStyle = "#38bdf8";
+                ctx.lineWidth = 3;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(sx, sy, INTERACT_RADIUS, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+              }
+
+              const state = cellState(cell, progressRef.current.wateringLevel, clockNow);
+              if (cell.content === "empty") {
+                ctx.font = "14px sans-serif";
+                ctx.fillStyle = "rgba(255,255,255,0.8)";
+                ctx.fillText("+", sx, sy);
+              } else if (cell.content === "crop" && cell.itemId) {
+                const crop = getCrop(cell.itemId);
+                if (crop) {
+                  if (state === "growing") {
+                    const total = crop.growTimeMs;
+                    const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
+                    const frac = Math.max(0, Math.min(1, elapsed / total));
+                    ctx.font = `${12 + frac * 12}px sans-serif`;
+                    ctx.globalAlpha = 0.85;
+                    ctx.fillText(crop.emoji, sx, sy);
+                    ctx.globalAlpha = 1;
+                    ctx.fillStyle = "rgba(255,255,255,0.7)";
+                    ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
+                    ctx.fillStyle = "#22c55e";
+                    ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
+                  } else {
+                    const bounce = Math.sin(frameNow / 180) * 2;
+                    ctx.font = "24px sans-serif";
+                    ctx.fillText(crop.emoji, sx, sy + bounce);
+                  }
+                }
+              } else if (cell.content === "animal" && cell.itemId) {
+                const animal = getAnimal(cell.itemId);
+                if (animal) {
+                  if (state === "growing") {
+                    const elapsed = clockNow - new Date(cell.timestamp ?? 0).getTime();
+                    const frac = Math.max(0, Math.min(1, elapsed / animal.cycleTimeMs));
+                    ctx.font = "20px sans-serif";
+                    ctx.fillText(animal.emoji, sx, sy);
+                    ctx.fillStyle = "rgba(255,255,255,0.7)";
+                    ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36, 5);
+                    ctx.fillStyle = "#22c55e";
+                    ctx.fillRect(sx - 18, sy + CELL_SIZE / 2 - 6, 36 * frac, 5);
+                  } else {
+                    const bounce = Math.sin(frameNow / 180) * 2;
+                    ctx.font = "24px sans-serif";
+                    ctx.fillText(animal.emoji, sx, sy + bounce);
+                  }
                 }
               }
             }
           }
         }
-      }
 
-      if (sprites.player?.complete) {
-        const pw = PLAYER_SIZE;
-        const ph = PLAYER_SIZE;
-        ctx.save();
-        if (facingRef.current === -1) {
-          ctx.translate(player.x - cameraX + pw / 2, player.y - cameraY - ph / 2);
-          ctx.scale(-1, 1);
-          ctx.drawImage(sprites.player, 0, 0, pw, ph);
-        } else {
-          ctx.drawImage(sprites.player, player.x - cameraX - pw / 2, player.y - cameraY - ph / 2, pw, ph);
+        if (sprites.player?.complete) {
+          const pw = PLAYER_SIZE;
+          const ph = PLAYER_SIZE;
+          ctx.save();
+          if (facingRef.current === -1) {
+            ctx.translate(player.x - cameraX + pw / 2, player.y - cameraY - ph / 2);
+            ctx.scale(-1, 1);
+            ctx.drawImage(sprites.player, 0, 0, pw, ph);
+          } else {
+            ctx.drawImage(sprites.player, player.x - cameraX - pw / 2, player.y - cameraY - ph / 2, pw, ph);
+          }
+          ctx.restore();
         }
-        ctx.restore();
       }
 
       rafId = requestAnimationFrame(frame);
