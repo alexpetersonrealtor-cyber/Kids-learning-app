@@ -5,10 +5,11 @@ import { prisma } from "@/lib/prisma";
 import {
   availableOrderItemIds,
   barnToJson,
-  canFulfillOrder,
+  canSellTowardOrder,
   fillOrders,
   ordersToJson,
   pruneStaleOrders,
+  sellTowardOrder,
   type Barn,
   type Chunk,
   type CustomerOrder,
@@ -48,25 +49,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no active order" }, { status: 400 });
   }
   const barn = progress.barn as unknown as Barn;
-  if (!canFulfillOrder(barn, order)) {
+  if (!canSellTowardOrder(barn, order)) {
     return NextResponse.json({ error: "not enough stock" }, { status: 400 });
   }
 
-  barn[order.itemId] = (barn[order.itemId] ?? 0) - order.quantity;
-  if (barn[order.itemId] <= 0) delete barn[order.itemId];
+  const sale = sellTowardOrder(barn, order);
 
   const chunks = progress.chunks as unknown as Chunk[];
-  const remainingOrders = pruneStaleOrders(orders.filter((_, i) => i !== orderIndex), chunks);
+  // A completed order (sale.order === null) drops out of the list; a
+  // partially-sold order stays put with its reduced quantity/reward.
+  const openOrders = orders.map((o, i) => (i === orderIndex ? sale.order : o)).filter((o): o is CustomerOrder => o !== null);
+  const remainingOrders = pruneStaleOrders(openOrders, chunks);
   const nextOrders = fillOrders(remainingOrders, availableOrderItemIds(chunks), Math.random);
 
   const updated = await prisma.farmProgress.update({
     where: { kidId },
     data: {
-      coins: progress.coins + order.reward,
-      barn: barnToJson(barn),
+      coins: progress.coins + sale.earned,
+      barn: barnToJson(sale.barn),
       currentOrders: ordersToJson(nextOrders),
     },
   });
 
-  return NextResponse.json({ progress: updated, earned: order.reward });
+  return NextResponse.json({ progress: updated, earned: sale.earned });
 }

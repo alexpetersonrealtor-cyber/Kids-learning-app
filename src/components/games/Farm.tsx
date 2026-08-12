@@ -17,7 +17,7 @@ import {
   availableOrderItemIds,
   buildBarn,
   canBuildBarn,
-  canFulfillOrder,
+  canSellTowardOrder,
   cellSellableItemId,
   cellState,
   chunkCost,
@@ -34,6 +34,7 @@ import {
   initialChunks,
   plantCell,
   pruneStaleOrders,
+  sellTowardOrder,
   totalBarnCapacity,
   upgradeCost,
   MAX_CUSTOMERS,
@@ -65,6 +66,26 @@ interface FarmProgressState {
   barn: Barn;
   basket: Basket;
   currentOrders: CustomerOrder[];
+}
+
+// The auto-harvest background poll re-fetches progress every 15s whether or
+// not anything actually changed, and applying a brand-new object/array
+// reference every time forces a full re-render of this whole (large, canvas
+// heavy) component — on slower hardware that shows up as a periodic
+// hitch/flash. Skip the state update entirely when the fetched snapshot is
+// no different from what's already showing.
+function progressStatesEqual(a: FarmProgressState, b: FarmProgressState): boolean {
+  return (
+    a.coins === b.coins &&
+    a.wateringLevel === b.wateringLevel &&
+    a.fertilizerLevel === b.fertilizerLevel &&
+    a.autoHarvest === b.autoHarvest &&
+    a.autoPlant === b.autoPlant &&
+    JSON.stringify(a.chunks) === JSON.stringify(b.chunks) &&
+    JSON.stringify(a.barn) === JSON.stringify(b.barn) &&
+    JSON.stringify(a.basket) === JSON.stringify(b.basket) &&
+    JSON.stringify(a.currentOrders) === JSON.stringify(b.currentOrders)
+  );
 }
 
 const DEFAULT_PROGRESS: FarmProgressState = {
@@ -156,6 +177,18 @@ function drawBarn(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fill();
 }
 
+// CanvasRenderingContext2D.roundRect isn't available on older Safari (pre
+// iPadOS 16) — a family tablet is a very plausible place to hit that, and
+// calling a missing method would throw mid-frame and kill the render loop.
+// Fall back to a plain rectangle path there instead of crashing.
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
 interface CellRef {
   chunkIndex: number;
   cellIndex: number;
@@ -203,19 +236,21 @@ export default function Farm({ kidId }: { kidId: string }) {
   }, [progress]);
 
   function applyProgress(data: { progress?: FarmProgressState }) {
-    if (data.progress) {
-      setProgress({
-        coins: data.progress.coins,
-        wateringLevel: data.progress.wateringLevel,
-        fertilizerLevel: data.progress.fertilizerLevel,
-        autoHarvest: data.progress.autoHarvest,
-        autoPlant: data.progress.autoPlant,
-        chunks: data.progress.chunks as Chunk[],
-        barn: data.progress.barn as Barn,
-        basket: data.progress.basket as Basket,
-        currentOrders: (data.progress.currentOrders as CustomerOrder[] | undefined) ?? [],
-      });
-    }
+    if (!data.progress) return;
+    const next: FarmProgressState = {
+      coins: data.progress.coins,
+      wateringLevel: data.progress.wateringLevel,
+      fertilizerLevel: data.progress.fertilizerLevel,
+      autoHarvest: data.progress.autoHarvest,
+      autoPlant: data.progress.autoPlant,
+      chunks: data.progress.chunks as Chunk[],
+      barn: data.progress.barn as Barn,
+      basket: data.progress.basket as Basket,
+      currentOrders: (data.progress.currentOrders as CustomerOrder[] | undefined) ?? [],
+    };
+    // Returning the same object back from a state updater is React's
+    // built-in way to bail out of the re-render entirely.
+    setProgress((p) => (progressStatesEqual(p, next) ? p : next));
   }
 
   // Order generation normally happens server-side (see /api/farm/progress),
@@ -373,21 +408,24 @@ export default function Farm({ kidId }: { kidId: string }) {
     showToast("Deposited into the barn!");
   }
 
-  // Fulfills whichever waiting customer's order the barn can actually
-  // cover; kids don't have to pick which one by hand.
+  // Sells toward whichever waiting customer's order the barn has anything
+  // for; kids don't have to pick which one by hand, and don't have to wait
+  // until they've grown the customer's full quantity — selling less than
+  // they asked for still pays out, and leaves the order open for the rest.
   function fulfillBestOrder() {
     const orders = progressRef.current.currentOrders;
     const barn = progressRef.current.barn;
-    const orderIndex = orders.findIndex((o) => canFulfillOrder(barn, o));
+    const orderIndex = orders.findIndex((o) => canSellTowardOrder(barn, o));
     if (orderIndex === -1) return;
     const order = orders[orderIndex];
+    const sale = sellTowardOrder(barn, order);
     setProgress((p) => {
-      const nextBarn = { ...p.barn };
-      nextBarn[order.itemId] = (nextBarn[order.itemId] ?? 0) - order.quantity;
-      if (nextBarn[order.itemId] <= 0) delete nextBarn[order.itemId];
-      const nextOrders = p.currentOrders.filter((_, i) => i !== orderIndex);
-      return { ...p, coins: p.coins + order.reward, barn: nextBarn, currentOrders: nextOrders };
+      const nextOrders = p.currentOrders
+        .map((o, i) => (i === orderIndex ? sale.order : o))
+        .filter((o): o is CustomerOrder => o !== null);
+      return { ...p, coins: p.coins + sale.earned, barn: sale.barn, currentOrders: nextOrders };
     });
+    const requestId = ++latestRequestIdRef.current;
     fetch("/api/farm/fulfill-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -395,11 +433,11 @@ export default function Farm({ kidId }: { kidId: string }) {
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) applyProgress(data);
+        if (data && requestId === latestRequestIdRef.current) applyProgress(data);
         ensureOrders();
       })
       .catch(() => ensureOrders());
-    showToast(`Sold for 🪙${order.reward}!`);
+    showToast(`Sold for 🪙${sale.earned}!`);
   }
 
   function buyChunk() {
@@ -585,7 +623,12 @@ export default function Farm({ kidId }: { kidId: string }) {
         const ox = TABLE_POS.x - cameraX + (i - 1) * 56;
         const faceY = TABLE_POS.y - cameraY - 62;
         const bubbleY = faceY - 34;
-        const fulfillable = canFulfillOrder(barnNow, order);
+        const have = barnNow[order.itemId] ?? 0;
+        const canFull = have >= order.quantity;
+        const canPartial = have > 0 && !canFull;
+        const bg = canFull ? "#dcfce7" : canPartial ? "#fef9c3" : "#ffffff";
+        const border = canFull ? "#22c55e" : canPartial ? "#eab308" : "#94a3b8";
+        const textColor = canFull ? "#166534" : canPartial ? "#854d0e" : "#1e293b";
         const label = `${item.emoji} x${order.quantity}`;
 
         ctx.font = "bold 18px sans-serif";
@@ -594,11 +637,11 @@ export default function Farm({ kidId }: { kidId: string }) {
         const bubbleH = 30;
         const bx = ox - bubbleW / 2;
         const by = bubbleY - bubbleH / 2;
-        ctx.fillStyle = fulfillable ? "#dcfce7" : "#ffffff";
-        ctx.strokeStyle = fulfillable ? "#22c55e" : "#94a3b8";
+        ctx.fillStyle = bg;
+        ctx.strokeStyle = border;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.roundRect(bx, by, bubbleW, bubbleH, 9);
+        roundRectPath(ctx, bx, by, bubbleW, bubbleH, 9);
         ctx.fill();
         ctx.stroke();
         ctx.beginPath();
@@ -606,18 +649,18 @@ export default function Farm({ kidId }: { kidId: string }) {
         ctx.lineTo(ox + 6, by + bubbleH - 1);
         ctx.lineTo(ox, by + bubbleH + 8);
         ctx.closePath();
-        ctx.fillStyle = fulfillable ? "#dcfce7" : "#ffffff";
+        ctx.fillStyle = bg;
         ctx.fill();
 
-        ctx.fillStyle = fulfillable ? "#166534" : "#1e293b";
+        ctx.fillStyle = textColor;
         ctx.fillText(label, ox, bubbleY);
 
         ctx.font = "32px sans-serif";
         ctx.fillText("🧑", ox, faceY);
       });
       if (nearTable) {
-        const anyFulfillable = orders.some((o) => canFulfillOrder(barnNow, o));
-        ctx.strokeStyle = anyFulfillable ? "#facc15" : "rgba(250,204,21,0.4)";
+        const anySellable = orders.some((o) => canSellTowardOrder(barnNow, o));
+        ctx.strokeStyle = anySellable ? "#facc15" : "rgba(250,204,21,0.4)";
         ctx.lineWidth = 3;
         ctx.setLineDash([6, 6]);
         ctx.beginPath();
@@ -918,7 +961,7 @@ export default function Farm({ kidId }: { kidId: string }) {
   const nearChunk = nearCellRef ? progress.chunks[nearCellRef.chunkIndex] : null;
   const nearCell = nearChunk && nearCellRef ? nearChunk.cells[nearCellRef.cellIndex] : null;
   const nearCellState = nearCell ? cellState(nearCell, progress.wateringLevel, now) : null;
-  const anyFulfillable = progress.currentOrders.some((o) => canFulfillOrder(progress.barn, o));
+  const anySellable = progress.currentOrders.some((o) => canSellTowardOrder(progress.barn, o));
 
   const actionLabel = nearCellRef
     ? nearCellState === "empty"
@@ -933,15 +976,15 @@ export default function Farm({ kidId }: { kidId: string }) {
       : interaction.nearTable
         ? progress.currentOrders.length === 0
           ? "No customers yet"
-          : anyFulfillable
+          : anySellable
             ? "💰 Sell to a customer"
-            : "❌ Not enough stock"
+            : "❌ Nothing to sell yet"
         : "Walk around";
 
   const canAct =
     (nearCellRef !== null && (nearCellState === "empty" || nearCellState === "ready")) ||
     interaction.nearBarn ||
-    (interaction.nearTable && anyFulfillable);
+    (interaction.nearTable && anySellable);
 
   const pickerChunk = cellPicker ? progress.chunks[cellPicker.chunkIndex] : null;
   const pickerBarnAvailable = pickerChunk ? canBuildBarn(pickerChunk) : false;

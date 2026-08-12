@@ -398,6 +398,41 @@ export function canFulfillOrder(barn: Barn, order: CustomerOrder): boolean {
   return (barn[order.itemId] ?? 0) >= order.quantity;
 }
 
+// A kid can sell toward an order with however much of the item they've got
+// — they don't have to wait until they've grown the full quantity a
+// customer asked for. Selling less than the full order pays out the same
+// per-unit rate and leaves the order open for the rest at a reduced
+// quantity/reward; selling the full remaining amount completes it (caller
+// should drop the order from the list when result.order is null).
+export function canSellTowardOrder(barn: Barn, order: CustomerOrder): boolean {
+  return (barn[order.itemId] ?? 0) > 0;
+}
+
+export function sellTowardOrder(
+  barn: Barn,
+  order: CustomerOrder,
+): { barn: Barn; order: CustomerOrder | null; earned: number } {
+  const have = barn[order.itemId] ?? 0;
+  const amount = Math.min(have, order.quantity);
+  if (amount <= 0) return { barn, order, earned: 0 };
+
+  const nextBarn = { ...barn };
+  nextBarn[order.itemId] = have - amount;
+  if (nextBarn[order.itemId] <= 0) delete nextBarn[order.itemId];
+
+  const perUnit = order.reward / order.quantity;
+  if (amount >= order.quantity) {
+    return { barn: nextBarn, order: null, earned: order.reward };
+  }
+  const earned = Math.round(perUnit * amount);
+  const remainingQuantity = order.quantity - amount;
+  return {
+    barn: nextBarn,
+    order: { ...order, quantity: remainingQuantity, reward: Math.round(perUnit * remainingQuantity) },
+    earned,
+  };
+}
+
 export function ordersToJson(orders: CustomerOrder[]): Prisma.InputJsonValue {
   return orders as unknown as Prisma.InputJsonValue;
 }
